@@ -1,3 +1,0 @@
-/home/list/Downloads/network/For Student/tcp/cmake-build-debug/CMakeFiles/rebuild_cache.dir
-/home/list/Downloads/network/For Student/tcp/cmake-build-debug/CMakeFiles/server.dir
-/home/list/Downloads/network/For Student/tcp/cmake-build-debug/CMakeFiles/edit_cache.dir
