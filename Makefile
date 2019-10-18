@@ -3,7 +3,7 @@ CFLAGS=-Wall -Wextra -O2
 
 
 make:
-	${CC} ${CFLAGS} server.c -o server
+	${CC} ${CFLAGS} ./src/server.c -o server
 # 	${CC} ${CFLAGS} client.c -o client
 
 clean: 

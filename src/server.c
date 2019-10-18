@@ -5,31 +5,55 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <getopt.h>
-#include <errno.h>
-#include <ctype.h>
 #include <string.h>
-#include <memory.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <sys/types.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include "hash_table.h"
 
-static int socket_fd, epoll_fd;
+#define EVENT_MAX 20
+#define BUFFER_SIZE_MAX 4096
 size_t epoll_size = 0;
+char *response[BUFFER_SIZE_MAX];
 
+
+static int socket_bind(const char* ipaddr, char* port);
 static void event_add(int epoll_fd, int fd, int state);
 static void event_delete(int epoll_fd, int fd, int state);
 static void event_modify(int epoll_fd, int fd, int state);
-static void handle_event(int epoll_fd,struct epoll_event *events, int listenfd, char *buf);
+static void handle_event(int epoll_fd,struct epoll_event *events, int ret, int listenfd, char *buf);
+static void handle_epoll(int listenfd);
+static int ftp_read(int epoll_fd, int fd, char *buf, int n);
+static int ftp_write(int epoll_fd, int fd, char *buf);
+
+int socket_bind(const char *ipaddr, char* port) {
+    int listenfd;
+    struct sockaddr_in addr;
+    listenfd = socket(AF_INET,SOCK_STREAM,0);
+    if(listenfd == -1){
+        perror("socket bind error");
+        exit(1);
+    }
+
+    memset(&addr,0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    inet_pton(AF_INET,ipaddr,&addr.sin_addr);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = atoi(port);
+
+    if(bind(listenfd,(struct sockaddr*)&addr,sizeof(addr)) == -1){
+        perror("bind error");
+        exit(1);
+    }
+    return listenfd;
+}
 
 void event_add(int epoll_fd, int fd, int state) {
     struct epoll_event event;
     event.events = state;
     event.data.fd = fd;
     int flag = epoll_ctl(epoll_fd,EPOLL_CTL_ADD,fd,&event);
-    if(flag == 0){
+    if(flag == -1){
         perror("event add error");
     }else{
         epoll_size++;
@@ -41,9 +65,9 @@ void event_delete(int epoll_fd, int fd, int state) {
     event.events = state;
     event.data.fd = fd;
     int flag = epoll_ctl(epoll_fd,EPOLL_CTL_DEL,fd,&event);
-    if(flag == 0){
+    if (flag == 0) {
         perror("event delete error");
-    }else{
+    } else {
         epoll_size--;
     }
 }
@@ -57,109 +81,86 @@ void event_modify(int epoll_fd, int fd, int state) {
     }
 }
 
-void handle_event(int epoll_fd, struct epoll_event *events, int listenfd, char *buf) {
-    int fd;
-    for(int i = 0;i < epoll_size;i++){
-        fd = events
+void handle_epoll(int listenfd) {
+    int epoll_fd;
+    int ret;
+    struct epoll_event events[EVENT_MAX];
+    char buf[BUFFER_SIZE_MAX];
+    memset(buf,0,BUFFER_SIZE_MAX);
+    epoll_fd = epoll_create1(0);
+    event_add(epoll_fd,listenfd,EPOLLIN);
+    while(epoll_size){
+        ret = epoll_wait(epoll_fd,events,EVENT_MAX,-1);
+        handle_event(epoll_fd,events,ret,listenfd,buf);
     }
+    close(listenfd);
 }
 
-static void socket_create_bind_local(port){
-
-    struct sockaddr_in server_addr;
-    int opt = 1;
-
-    if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1){
-        perror("Socket");
-        exit(1);
-    }
-
-    if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int)) == -1){
-        perror("Setsockopt");
-        exit(1);
-    }
-
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(atoi(port));
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-
-
-    if (bind(socket_fd,(struct sockaddr *)&server_addr, sizeof(struct sockaddr))){
-        perror("Unable to bind");
-        exit(1);
-    }
-}
-
-static int make_socket_non_blocking(int sfd){
-    int flags;
-
-    flags = fcntl(sfd, F_GETFL, 0);
-    if (flags == -1){
-        perror("fcntl error");
-        return -1;
-    }
-
-    flags |= O_NONBLOCK; // a |= b means a = a & b
-
-    if (fcntl(sfd, F_GETFL, flags) == -1){
-        perror("fcntl error 2");
-        return -1;
-    }
-    return 0;
-}
-
-void accept_and_add_new(){
-    struct epoll_event event;
-    struct sockaddr in_addr;
-    socklen_t in_len  = sizeof(in_addr);
-    int infd;
-
-    char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
-
-    while ((infd = accept(socket_fd, &in_addr, &in_len)) != -1){
-        if(getnameinfo(&in_addr,in_len,
-                hbuf, sizeof(hbuf),
-                sbuf, sizeof(sbuf),
-                NI_NUMERICHOST) == 0){
-            printf("Accepted connection on descriptor %d (host=%s, port=%s)\n",
-                   infd, hbuf, sbuf);
+void handle_event(int epoll_fd, struct epoll_event *events,int ret, int listenfd, char *buf) {
+    for(int i = 0;i < ret;i++){
+        if(events[i].data.fd == listenfd){
+            struct sockaddr_in cliaddr;
+            socklen_t socklen;
+            int socketfd = accept(listenfd,(struct sockaddr*)&cliaddr,&socklen);
+            if (socketfd == -1) {
+                perror("accpet error:");
+            } else {
+                printf("accept a new client: %s:%d\n", inet_ntoa(cliaddr.sin_addr), cliaddr.sin_port);
+                //添加一个客户描述符和事件
+                event_add(epoll_fd, socketfd, EPOLLOUT);
+            }
+        } else if(events[i].events & EPOLLIN){
+            //read
+            ftp_read(epoll_fd,events[i].data.fd,buf,BUFFER_SIZE_MAX);
+        } else if(events[i].events & EPOLLOUT){
+            //write
+            strcpy(response,"220 (MinimumFTP v0.1.0 alpha)\r\n");
+            ftp_write(epoll_fd, events[i].data.fd, response);
         }
-
-        event.data.fd = infd;
-        event.events = EPOLLIN | EPOLLET;
-        if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, infd, &event) == -1){
-            perror("epoll_ctl");
-            abort();
-        }
-        in_len = sizeof(in_addr);
-    }
-    if (errno != EAGAIN && errno != EWOULDBLOCK){
-        perror("accept");
     }
 }
 
-void process_new_data(int fd)
-{
-    ssize_t count;
-    char buf[512];
 
-    while ((count = read(fd, buf, sizeof(buf) - 1))) {
-        if (count == -1) {
-            /* EAGAIN, read all data */
-            if (errno == EAGAIN)
-                return;
 
-            perror("read");
-            break;
-        }
-
-        /* Write buffer to stdout */
-        buf[count] = '\0';
-        printf("%s \n", buf);
+int ftp_read(int epoll_fd, int fd, char *buf, int n) {
+    int nread;
+    nread = read(fd, buf, n);
+    printf("%d\n",nread);
+    if (nread == -1)
+    {
+        perror("read error:");
+        close(fd);
+        event_delete(epoll_fd,fd,EPOLLIN);
     }
+    else if (nread == 0)
+    {
+        fprintf(stderr,"client close.\n");
+        close(fd);
+        event_delete(epoll_fd,fd,EPOLLIN);
+    }
+    else
+    {
+        printf("read message is : %s",buf);
+        //修改描述符对应的事件，由读改为写
+        event_modify(epoll_fd, fd,EPOLLOUT);
+    }
+    return nread;
+}
 
-    printf("Close connection on descriptor: %d\n", fd);
-    close(fd);
+int ftp_write(int epoll_fd, int fd, char *buf) {
+    int nwrite;
+    nwrite = write(fd,buf,strlen(buf));
+    if (nwrite == -1)
+    {
+        perror("write error:");
+        close(fd);
+        event_delete(epoll_fd,fd,EPOLLOUT);
+    }
+    else
+        event_modify(epoll_fd,fd,EPOLLIN);
+    memset(buf,0,BUFFER_SIZE_MAX);
+    printf("%d",nwrite);
+    return nwrite;
 }
 
 
@@ -167,12 +168,8 @@ int main(int argc, char *argv[]) {
 
     char *host = "127.0.0.1";
 	char *pathname = "/tmp";
-	char *port = "21";
-	int listenfd, connfd;		//监听socket和连接socket不一样，后者用于数据传输
-	struct sockaddr_in addr;
-	char sentence[8192];
-	int p;
-	int len;
+	char *port = "6789";
+	int listenfd;
 
 	//参数解析
 	static struct option long_options[] = {
@@ -202,4 +199,10 @@ int main(int argc, char *argv[]) {
                 exit(EXIT_FAILURE);
         }
     }
+    listenfd = socket_bind(host, port);
+    if(listen(listenfd, 10) == -1){
+        perror("listen error");
+    }
+    handle_epoll(listenfd);
+    return 0;
 }
