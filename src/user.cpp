@@ -2,7 +2,6 @@
 // Created by list on 2019/10/16.
 //
 #include <string.h>
-#include "hash_table.h"
 #include "user.h"
 
 users_t users;
