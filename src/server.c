@@ -10,14 +10,17 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <dirent.h>
+#include <sys/stat.h>
 
 #define EVENT_MAX 20
 #define BUFFER_SIZE_MAX 4096
 #define COMMAND_SIZE 200
-#define COMMAND_LENGTH 20
+#define COMMAND_LENGTH 19
 #define WORKINGDIRECTORY 100
+#define DATA_SIZE_MAX 4096*4
 
 typedef int (*command_callback)(int epoll_fd, struct epoll_event *event, char *command);
+
 
 typedef struct ftp_command {
     char *command;
@@ -25,27 +28,37 @@ typedef struct ftp_command {
     command_callback callback;
 }ftpCommand;
 
-enum buffer_status {
-    COMMAND,
-    DATA
-};
+typedef struct fd_collection{
+    int command_fd;
+    int data_fd;
+    int file_fd;
+    int pasv_fd;
+
+    char data[DATA_SIZE_MAX];
+    size_t data_length;
+    size_t file_size;
+
+    int file_read_flag;
+    int file_write_flag;
+    int data_write_flag;
+    int data_read_flag;
+
+}fd_collection;
 
 typedef struct epoll_args{
-    char buffer[1000];
+    char buffer[BUFFER_SIZE_MAX];
     int buffer_length;
-    char data[1000];
-    int data_length;
+
+
     int fd;
-    int data_fd;
-    enum buffer_status stas[100];
-    int stas_length;
-    int complex;
+    fd_collection *fds;
+
     char *working_dir;
     struct sockaddr_storage addr;
     socklen_t addrlen;
     struct sockaddr_storage pasv_addr;
     socklen_t pasv_addrlen;
-    int pasv_fd;
+
 }epollArgs;
 
 
@@ -59,52 +72,53 @@ int listenfd;
 char command_buf[BUFFER_SIZE_MAX];
 int buf_end = 0;
 
-static int socket_bind(const char* ipaddr, char* port);
-static void event_add(int epoll_fd, int fd, int state, char *buf);
-static void event_delete(int epoll_fd, struct epoll_event *events, int state);
-static void handle_event(int epoll_fd,struct epoll_event *events, int ret, int listenfd, char *buf);
-static void handle_epoll(int listenfd);
-static int ftp_read(int epoll_fd, struct epoll_event *event, char *buf, int n);
-static int ftp_write(int epoll_fd, struct epoll_event *event);
-static int ftp_write_string(int epoll_fd, struct epoll_event *event, char *buf);
+int socket_bind(const char* ipaddr, char* port);
+void epoll_args_init(epollArgs **args, int fd, char *buf);
+void event_add(int epoll_fd, int fd, epollArgs *args, int state);
+void event_delete(int epoll_fd, struct epoll_event *events, int state);
+void handle_event(int epoll_fd,struct epoll_event *events, int ret, int listenfd, char *buf);
+void handle_epoll(int listenfd);
+int ftp_read(int epoll_fd, struct epoll_event *event, char *buf, int n);
+int ftp_write(int epoll_fd, struct epoll_event *event);
+int ftp_write_data(int epoll_fd, struct epoll_event *event);
+int ftp_write_file(int epoll_fd, struct epoll_event *event);
 
 //handle command
-static int handle_command(int epoll_fd, struct epoll_event *event, char* command);
-static int handle_user(int epoll_fd, struct epoll_event *event, char *command);
-static int handle_pass(int epoll_fd, struct epoll_event *event, char *command);
-static int handle_syst(int epoll_fd, struct epoll_event *event, char *command);
-static int handle_list(int epoll_fd, struct epoll_event *event, char *command);
-static int handle_port(int epoll_fd, struct epoll_event *event, char *command);
-static int handle_pasv(int epoll_fd, struct epoll_event *event, char *command);
-static int handle_cwd(int epoll_fd, struct epoll_event *event, char *command);
-static int handle_pwd(int epoll_fd, struct epoll_event *event, char *command);
+int handle_command(int epoll_fd, struct epoll_event *event, char* command);
+int handle_user(int epoll_fd, struct epoll_event *event, char *command);
+int handle_pass(int epoll_fd, struct epoll_event *event, char *command);
+int handle_syst(int epoll_fd, struct epoll_event *event, char *command);
+int handle_list(int epoll_fd, struct epoll_event *event, char *command);
+int handle_port(int epoll_fd, struct epoll_event *event, char *command);
+int handle_pasv(int epoll_fd, struct epoll_event *event, char *command);
+int handle_cwd(int epoll_fd, struct epoll_event *event, char *command);
+int handle_pwd(int epoll_fd, struct epoll_event *event, char *command);
+int handle_type(int epoll_fd, struct epoll_event *event, char *command);
+int handle_retr(int epoll_fd, struct epoll_event *event, char *command);
 
 ftpCommand command_list[] = {
         {"PASS", 4, handle_pass},
         {"QUIT", 4, NULL},
         {"USER", 4, handle_user},
-
         {"APPE", 4, NULL},
         {"CWD",  3, handle_cwd},
         {"DELE", 4, NULL},
         {"LIST", 4, handle_list},
         {"MKD",  3, NULL},
-        {"PASS", 4, NULL},
         {"PASV", 4, handle_pasv},
         {"PORT", 4, handle_port},
         {"PWD",  3, handle_pwd},
         {"QUIT", 4, NULL},
-        {"RETR", 4, NULL},
+        {"RETR", 4, handle_retr},
         {"RMD",  3, NULL},
         {"SIZE", 4, NULL},
         {"STOR", 4, NULL},
         {"SYST", 4, handle_syst},
-        {"TYPE", 4, NULL},
+        {"TYPE", 4, handle_type},
         {"USER", 4, NULL}
 };
 
-int socket_bind(const char *ipaddr, char* port) {
-    int listenfd;
+int socket_bind(const char *ipaddr, char* port_t) {
     struct sockaddr_in addr;
     listenfd = socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
     if(listenfd == -1){
@@ -116,7 +130,7 @@ int socket_bind(const char *ipaddr, char* port) {
     addr.sin_family = AF_INET;
     inet_pton(AF_INET,ipaddr,&addr.sin_addr);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port = strtol(port,NULL,10);
+    addr.sin_port = strtol(port_t,NULL,10);
 
     int temp = 1;
     if (setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &temp, sizeof(temp)) == -1){
@@ -130,26 +144,10 @@ int socket_bind(const char *ipaddr, char* port) {
     return listenfd;
 }
 
-void event_add(int epoll_fd, int fd, int state, char* buf) {
+void event_add(int epoll_fd, int fd, epollArgs *args, int state) {
+    args->fd = fd;
     struct epoll_event event;
     event.events = state;
-    epollArgs *args = (epollArgs*)malloc(sizeof(epollArgs));
-    args->fd = fd;
-    args->data_fd = -1;
-    args->working_dir = pathname;
-    args->buffer_length = 0;
-    args->data_length = 0;
-    args->complex = 0;
-    args->stas_length = 0;
-    args->pasv_addrlen = sizeof(args->pasv_addr);
-    if(getsockname(fd, (struct sockaddr *)&args->pasv_addr, &args->pasv_addrlen) == -1){
-        perror("getsockname error");
-    }
-//    close(fd);
-    if(buf){
-        strcpy(args->buffer+args->buffer_length, buf);
-        args->buffer_length += strlen(buf);
-    }
     event.data.ptr = args;
     int flag = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &event);
     if(flag == -1){
@@ -170,27 +168,29 @@ void event_delete(int epoll_fd, struct epoll_event *events, int state) {
     }
 }
 
-void handle_epoll(int listenfd) {
+void handle_epoll(int fd) {
     int epoll_fd;
     int ret;
     struct epoll_event events[EVENT_MAX];
     memset(command_buf,0,BUFFER_SIZE_MAX);
     epoll_fd = epoll_create(10);
-    event_add(epoll_fd, listenfd,EPOLLIN, NULL);
+    epollArgs *args = NULL;
+    epoll_args_init(&args,fd,NULL);
+    event_add(epoll_fd, fd, args, EPOLLIN);
     while(epoll_size){
         ret = epoll_wait(epoll_fd,events,EVENT_MAX,-1);
-        handle_event(epoll_fd,events,ret,listenfd,command_buf);
+        handle_event(epoll_fd,events,ret,fd,command_buf);
     }
-    close(listenfd);
+    close(fd);
 }
 
-void handle_event(int epoll_fd, struct epoll_event *events, int ret, int listenfd, char *buf) {
+void handle_event(int epoll_fd, struct epoll_event *events, int ret, int listenfd_t, char *buf) {
     for (int i = 0; i < ret; i++) {
         epollArgs *args = events[i].data.ptr;
-        if (args->fd == listenfd) {
+        if (args->fd == listenfd_t) {
             struct sockaddr_in cliaddr;
             socklen_t socklen = sizeof(struct sockaddr_in);
-            int socketfd = accept(listenfd, (struct sockaddr *) &cliaddr, &socklen);
+            int socketfd = accept(listenfd_t, (struct sockaddr *) &cliaddr, &socklen);
             if (socketfd == -1) {
                 perror("accpet error:");
             } else {
@@ -199,7 +199,10 @@ void handle_event(int epoll_fd, struct epoll_event *events, int ret, int listenf
                 if (flags == -1 || fcntl(socketfd, F_SETFL, flags | O_NONBLOCK) == -1) {
                     perror("fcntl error");
                 }
-                event_add(epoll_fd, socketfd, EPOLLIN | EPOLLOUT | EPOLLET,"220 list FTP server ready.\r\n");
+                epollArgs *args1 = NULL;
+                epoll_args_init(&args1,socketfd,"220 list FTP server ready.\r\n");
+                args1->fds->command_fd = socketfd;
+                event_add(epoll_fd, socketfd, args1, EPOLLIN | EPOLLOUT | EPOLLET);
             }
         } else {
             if (events[i].events & EPOLLIN) {
@@ -215,96 +218,93 @@ void handle_event(int epoll_fd, struct epoll_event *events, int ret, int listenf
 int ftp_read(int epoll_fd, struct epoll_event *event, char *buf, int n) {
     int temp;
     epollArgs *args = event->data.ptr;
-    while (1){
-        temp = read(args->fd, buf + buf_end, n);
-        if(temp == -1){
-            if(errno == EAGAIN || errno == EWOULDBLOCK){
-                break;
+    if(args->fd == args->fds->command_fd){
+        //读到缓冲区
+        while (1){
+            temp = read(args->fd, buf + buf_end, n);
+            if(temp == -1){
+                if(errno == EAGAIN || errno == EWOULDBLOCK){
+                    break;
+                }else{
+                    perror("read error:");
+                    close(args->fd);
+                    event_delete(epoll_fd,event,EPOLLIN);
+                }
             }else{
-                perror("read error:");
-                close(args->fd);
-                event_delete(epoll_fd,event,EPOLLIN);
+                buf_end = buf_end + temp;
             }
-        }else{
-            buf_end = buf_end + temp;
         }
-    }
 
-    char command[COMMAND_SIZE];
-    while (strchr(buf,'\r')!=NULL){
-        size_t command_begin = 0;
-        while (buf[command_begin] != '\r'){
-            command[command_begin] = buf[command_begin];
-            command_begin++;
+        //分解命令
+        char command[COMMAND_SIZE];
+        while (strchr(buf,'\r')!=NULL){
+            size_t command_begin = 0;
+            while (buf[command_begin] != '\r'){
+                command[command_begin] = buf[command_begin];
+                command_begin++;
+            }
+            command[command_begin] = '\0';
+            memmove(buf,buf+command_begin+2,BUFFER_SIZE_MAX-command_begin);
+            buf_end = buf_end - command_begin - 2;
+            printf("read message is : %s",command);
+            handle_command(epoll_fd, event, command);
         }
-        command[command_begin] = '\0';
-        memmove(buf,buf+command_begin+2,BUFFER_SIZE_MAX-command_begin);
-        buf_end = buf_end - command_begin - 2;
-        printf("read message is : %s",command);
-        handle_command(epoll_fd, event, command);
+        return temp;
+    }else if(args->fd == args->fds->data_fd){
+        //to do 数据传输
+    }else if(args->fd == args->fds->file_fd){
+        //to do
     }
-    return temp;
 }
+
+
 
 int ftp_write(int epoll_fd, struct epoll_event *event) {
-    int n;
+    (void) epoll_fd;
+
+    int n = -1;
     epollArgs *epollArgs1 = event->data.ptr;
-    if(epollArgs1->complex){
-        for(int i=0;i<epollArgs1->stas_length;i++){
-            switch (epollArgs1->stas[i]){
-                case COMMAND:{
-                    char *position_char = strchr(epollArgs1->buffer,'\n');
-                    int position = position_char == NULL ? -1 : position_char - epollArgs1->buffer;
-                    if(position != -1){
-                        n = write(epollArgs1->fd, epollArgs1->buffer , position + 1);
-                        if(n<=epollArgs1->buffer_length){
-                            epollArgs1->buffer_length -= position;
-                            memmove(epollArgs1->buffer, epollArgs1->buffer+position + 1, epollArgs1->buffer_length);
-                        }
-                    }
+
+    if(epollArgs1->fd == epollArgs1->fds->command_fd){
+        while (1){
+            char *position_char = strchr(epollArgs1->buffer,'\n');
+            ssize_t position = (position_char == NULL) ? -1 : position_char - epollArgs1->buffer;
+            if(position != -1){
+                n = write(epollArgs1->fd, epollArgs1->buffer , position + 1);
+                if(n<=epollArgs1->buffer_length){
+                    epollArgs1->buffer_length -= (position + 1);
+                    memmove(epollArgs1->buffer, epollArgs1->buffer+position + 1, BUFFER_SIZE_MAX - (position + 2));
                 }
-                    break;
-                case DATA:{
-                    n = write(epollArgs1->data_fd,epollArgs1->data, epollArgs1->data_length);
-                    if(n<=epollArgs1->data_length){
-                        if(n == epollArgs1->data_length){
-                            close(epollArgs1->data_fd);
-                        }
-                        epollArgs1->data_length -= n;
-                        memmove(epollArgs1->data, epollArgs1->data+n, epollArgs1->data_length);
-                    }
-                }
-                    break;
-            }
+            }else
+                break;
         }
-        epollArgs1->complex = 0;
-        epollArgs1->stas_length = 0;
-    }else{
-        n = write(epollArgs1->fd, epollArgs1->buffer,epollArgs1->buffer_length);
-        if (n == -1){
-            perror("write error:");
-            close(epollArgs1->fd);
-            event_delete(epoll_fd,event,EPOLLOUT);
-        }else if(n<=epollArgs1->buffer_length){
-            epollArgs1->buffer_length -= n;
-            memmove(epollArgs1->buffer, epollArgs1->buffer+n, epollArgs1->buffer_length);
+        if(epollArgs1->fds->data_write_flag){
+            ftp_write_data(epoll_fd, event);
         }
-        return n;
+    }else if(epollArgs1->fd == epollArgs1->fds->data_fd){
+        ftp_write_data(epoll_fd, event);
     }
+    return n;
 }
 
-int ftp_write_string(int epoll_fd, struct epoll_event *event, char *buf) {
-    int n;
-    if(buf){
-        epollArgs *args = event->data.ptr;
-        n = write(args->fd, buf,strlen(buf));
-        if (n == -1){
-            perror("write error:");
-            close(args->fd);
-            event_delete(epoll_fd,event,EPOLLOUT);
+
+int ftp_write_data(int epoll_fd, struct epoll_event *event) {
+    int n = -1;
+    epollArgs *epollArgs1 = event->data.ptr;
+    n = write(epollArgs1->fds->data_fd, epollArgs1->fds->data, epollArgs1->fds->data_length);
+    if(n <= epollArgs1->fds->data_length){
+        if(n == epollArgs1->fds->data_length && n != 0){
+            close(epollArgs1->fds->data_fd);
         }
-        return n;
+        epollArgs1->fds->data_write_flag = 1;
+        epollArgs1->fds->data_length -= n;
+        memmove(epollArgs1->fds->data, epollArgs1->fds->data+n, epollArgs1->fds->data_length);
     }
+    return 0;
+}
+
+int ftp_write_file(int epoll_fd, struct epoll_event *event) {
+    return 0;
 }
 
 int handle_command(int epoll_fd, struct epoll_event *event,char *command) {
@@ -321,6 +321,7 @@ int handle_command(int epoll_fd, struct epoll_event *event,char *command) {
 }
 
 int handle_user(int epoll_fd, struct epoll_event *event, char *command) {
+    (void) epoll_fd;
     size_t len = strlen(command);
     if(strncmp("anonymous",command,len-2) == 0){
         epollArgs *args = event->data.ptr;
@@ -353,9 +354,7 @@ int handle_syst(int epoll_fd, struct epoll_event *event, char *command) {
 int handle_list(int epoll_fd, struct epoll_event *event, char *command) {
     char filename[255];
     epollArgs *args = event->data.ptr;
-    args->complex = 1;
     strcpy(args->buffer + args->buffer_length,"150 directory list start\r\n");
-    args->stas[args->stas_length++] = COMMAND;
     args->buffer_length += strlen("150 directory list start\r\n");
     DIR *dir = NULL;
     struct dirent *myitem = NULL;
@@ -372,14 +371,12 @@ int handle_list(int epoll_fd, struct epoll_event *event, char *command) {
             }
             filename[s] = '\n';
             filename[s+1] = '\0';
-            strcpy(args->data+args->data_length,filename);
-            args->data_length += strlen(filename);
+            strcpy(args->fds->data+args->fds->data_length,filename);
+            args->fds->data_length += strlen(filename);
         }
     }
-    args->stas[args->stas_length++] = DATA;
     strcpy(args->buffer+args->buffer_length,"226 directory list end\r\n");
     args->buffer_length += strlen("226 directory list end\r\n");
-    args->stas[args->stas_length++] = COMMAND;
 }
 
 int handle_port(int epoll_fd, struct epoll_event *event, char *command) {
@@ -394,32 +391,37 @@ int handle_port(int epoll_fd, struct epoll_event *event, char *command) {
     }
     addr->sin_family = AF_INET;
     args->addrlen = sizeof(struct sockaddr_in);
-    if(args->data_fd != -1){
-        close(args->data_fd);
+    if(args->fds->data_fd != -1){
+        close(args->fds->data_fd);
     }
-    args->data_fd = socket(args->addr.ss_family,SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
-    if(args->data_fd == -1){
-        ftp_write_string(epoll_fd,event,"425 connection error");
+    args->fds->data_fd = socket(args->addr.ss_family,SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
+    if(args->fds->data_fd == -1){
+        strcpy(args->buffer+args->buffer_length, "425 connection error");
+        args->buffer_length += strlen("425 connection error");
     }else{
-
-        int flags = fcntl(args->data_fd, F_GETFL, 0);
-        if (flags == -1 || fcntl(args->data_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        int flags = fcntl(args->fds->data_fd, F_GETFL, 0);
+        if (flags == -1 || fcntl(args->fds->data_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
             perror("fcntl error");
         }
 
-        if(connect(args->data_fd, (struct sockaddr *)&args->addr, args->addrlen) == -1){
+        if(connect(args->fds->data_fd, (struct sockaddr *)&args->addr, args->addrlen) == -1){
             if(errno == EINPROGRESS){
-                struct epoll_event *event1;
-                event_add(epoll_fd, args->data_fd,EPOLLET|EPOLLIN|EPOLLOUT,NULL);
+                epollArgs *args1;
+                epoll_args_init(&args1, args->fds->data_fd,NULL);
+                args1->fds = args->fds;
+                event_add(epoll_fd, args->fds->data_fd,args1,EPOLLET|EPOLLIN|EPOLLOUT);
                 strcpy(args->buffer+args->buffer_length,"200 PORT command successful.\r\n");
                 args->buffer_length += strlen("200 PORT command successful.\r\n");
             }else{
                 perror("connect error");
-                ftp_write_string(epoll_fd, event,"425 connection error");
+                strcpy(args->buffer+args->buffer_length,"425 connection error\r\n");
+                args->buffer_length += strlen("425 connection error\r\n");
             }
         }else{
-            struct epoll_event *event1;
-            event_add(epoll_fd, args->data_fd,EPOLLET|EPOLLIN|EPOLLOUT, NULL);
+            epollArgs *args1 = NULL;
+            epoll_args_init(&args1, args->fds->data_fd,NULL);
+            args1->fds = args->fds;
+            event_add(epoll_fd, args->fds->data_fd,EPOLLET|EPOLLIN|EPOLLOUT, NULL);
             strcpy(args->buffer+args->buffer_length,"200 PORT command successful.\r\n");
             args->buffer_length += strlen("200 PORT command successful.\r\n");
         }
@@ -436,24 +438,26 @@ int handle_pasv(int epoll_fd, struct epoll_event *event, char *command) {
         args->buffer_length += strlen("522: No address available for PASV\r\n");
         return -1;
     }
-    args->pasv_fd = socket(args->pasv_addr.ss_family, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
-    if (args->pasv_fd == -1) {
+    args->fds->pasv_fd = socket(args->pasv_addr.ss_family, SOCK_STREAM | SOCK_NONBLOCK, IPPROTO_TCP);
+    if (args->fds->pasv_fd == -1) {
         perror("pasv handle error");
     } else {
         struct sockaddr_in addr = *(struct sockaddr_in *) &args->pasv_addr;
         addr.sin_port = 0;
         socklen_t addrlen = sizeof(addr);
-        if (bind(args->pasv_fd, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
-            close(args->pasv_fd);
-            args->pasv_fd = -1;
-        } else if (getsockname(args->pasv_fd, (struct sockaddr *) &addr, &addrlen) == -1) {
-            close(args->pasv_fd);
-            args->pasv_fd = -1;
-        } else if (listen(args->pasv_fd, SOMAXCONN) == -1) {
-            close(args->pasv_fd);
-            args->pasv_fd = -1;
+        if (bind(args->fds->pasv_fd, (struct sockaddr *) &addr, sizeof(addr)) == -1) {
+            close(args->fds->pasv_fd);
+            args->fds->pasv_fd = -1;
+        } else if (getsockname(args->fds->pasv_fd, (struct sockaddr *) &addr, &addrlen) == -1) {
+            close(args->fds->pasv_fd);
+            args->fds->pasv_fd = -1;
+        } else if (listen(args->fds->pasv_fd, SOMAXCONN) == -1) {
+            close(args->fds->pasv_fd);
+            args->fds->pasv_fd = -1;
         } else {
-            event_add(epoll_fd, args->pasv_fd,EPOLLIN | EPOLLET, NULL);
+            epollArgs *args1 = NULL;
+            epoll_args_init(&args1,args->fds->pasv_fd,NULL);
+            event_add(epoll_fd, args->fds->pasv_fd,args1,EPOLLIN | EPOLLET);
             strcpy(args->buffer+args->buffer_length,"227 Passive Mode\r\n");
             args->buffer_length += strlen("227 Passive Mode\r\n");
             ret = 0;
@@ -474,9 +478,73 @@ int handle_cwd(int epoll_fd, struct epoll_event *event, char *command) {
 int handle_pwd(int epoll_fd, struct epoll_event *event, char *command) {
     getcwd(workdir,WORKINGDIRECTORY);
     epollArgs * args = event->data.ptr;
-    strcpy(args->buffer+args->buffer_length,"")
+    strcpy(args->buffer+args->buffer_length,"");
     return 0;
 }
+
+int handle_type(int epoll_fd, struct epoll_event *event, char *command) {
+    (void) epoll_fd;
+    if(strcmp(command, "I") == 0){
+        epollArgs *args = event->data.ptr;
+        strcpy(args->buffer+args->buffer_length, "200 Type set to I.\r\n");
+        args->buffer_length += strlen("200 Type set to I.\r\n");
+    }
+    return 0;
+}
+
+int handle_retr(int epoll_fd, struct epoll_event *event, char *command) {
+    epollArgs *args = event->data.ptr;
+    char filepath[1000];
+    strcpy(filepath,args->working_dir);
+    filepath[strlen(args->working_dir)] = '/';
+    strcpy(filepath+strlen(args->working_dir)+1,command);
+    struct stat stat_t;
+    if(((args->fds->file_fd = open(filepath, O_RDONLY | O_NONBLOCK)) == -1)
+    || (stat(pathname,&stat_t) == -1) ||(!S_ISREG(stat_t.st_mode))){
+        strcpy(args->buffer+args->buffer_length, "425 Failed to open file.\r\n");
+        args->buffer_length += strlen("425 Failed to open file.\r\n");
+    } else {
+        epollArgs *args1 = NULL;
+        epoll_args_init(&args1, args->fds->file_fd, NULL);
+        args1->fds = args->fds;
+        args1->fds->file_size = stat_t.st_size;
+        args1->fds->file_read_flag = 1;
+//        event_add(epoll_fd, args->fds->file_fd, args1,EPOLLIN|EPOLLET);
+    }
+    return 0;
+}
+
+void epoll_args_init(epollArgs **args, int fd, char *buf) {
+    *args = (epollArgs*)malloc(sizeof(epollArgs));
+    (*args)->fd = fd;
+
+    (*args)->fds = (fd_collection*)malloc(sizeof(fd_collection));
+
+    (*args)->fds->file_fd = -1;
+    (*args)->fds->file_write_flag = 0;
+    (*args)->fds->file_read_flag = 0;
+    (*args)->fds->file_size = 0;
+
+    (*args)->fds->data_fd = -1;
+    (*args)->fds->data_write_flag = 0;
+    (*args)->fds->data_read_flag = 0;
+
+    (*args)->fds->command_fd = -1;
+
+    (*args)->working_dir = pathname;
+    (*args)->buffer_length = 0;
+    (*args)->fds->data_length = 0;
+    (*args)->pasv_addrlen = sizeof((*args)->pasv_addr);
+    if(getsockname(fd, (struct sockaddr *)&(*args)->pasv_addr, &(*args)->pasv_addrlen) == -1){
+        perror("getsockname error");
+    }
+    if(buf){
+        strcpy((*args)->buffer+(*args)->buffer_length, buf);
+        (*args)->buffer_length += strlen(buf);
+    }
+}
+
+
 
 int main(int argc, char *argv[]) {
 
