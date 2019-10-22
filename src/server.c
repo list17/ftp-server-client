@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <stdarg.h>
 
 #define EVENT_MAX 20
 #define BUFFER_SIZE_MAX 4096
@@ -28,6 +29,12 @@ typedef struct ftp_command {
     command_callback callback;
 }ftpCommand;
 
+enum WRITE_MODE {
+    WRITE_FREE,
+    FTP_DATA,
+    FTP_FILE
+};
+
 typedef struct fd_collection{
     int command_fd;
     int data_fd;
@@ -37,11 +44,14 @@ typedef struct fd_collection{
     char data[DATA_SIZE_MAX];
     size_t data_length;
     size_t file_size;
+    size_t written_size;
 
     int file_read_flag;
     int file_write_flag;
     int data_write_flag;
     int data_read_flag;
+
+    enum WRITE_MODE write_mode;
 
 }fd_collection;
 
@@ -49,11 +59,11 @@ typedef struct epoll_args{
     char buffer[BUFFER_SIZE_MAX];
     int buffer_length;
 
-
     int fd;
     fd_collection *fds;
 
     char *working_dir;
+    size_t wd_len;
     struct sockaddr_storage addr;
     socklen_t addrlen;
     struct sockaddr_storage pasv_addr;
@@ -72,9 +82,11 @@ int listenfd;
 char command_buf[BUFFER_SIZE_MAX];
 int buf_end = 0;
 
+int str_cpy(epollArgs **args, char *format, ...);
+
 int socket_bind(const char* ipaddr, char* port);
 void epoll_args_init(epollArgs **args, int fd, char *buf);
-void event_add(int epoll_fd, int fd, epollArgs *args, int state);
+void event_add(int epoll_fd, int fd, epollArgs *args, unsigned int state);
 void event_delete(int epoll_fd, struct epoll_event *events, int state);
 void handle_event(int epoll_fd,struct epoll_event *events, int ret, int listenfd, char *buf);
 void handle_epoll(int listenfd);
@@ -137,6 +149,7 @@ int socket_bind(const char *ipaddr, char* port_t) {
         perror("setsockopt error");
         exit(1);
     }
+
     if(bind(listenfd,(struct sockaddr*)&addr,sizeof(addr)) == -1){
         perror("bind error");
         exit(1);
@@ -144,14 +157,50 @@ int socket_bind(const char *ipaddr, char* port_t) {
     return listenfd;
 }
 
-void event_add(int epoll_fd, int fd, epollArgs *args, int state) {
+
+void epoll_args_init(epollArgs **args, int fd, char *buf) {
+    *args = (epollArgs*)malloc(sizeof(epollArgs));
+    (*args)->fd = fd;
+
+    (*args)->fds = (fd_collection*)malloc(sizeof(fd_collection));
+
+    (*args)->fds->file_fd = -1;
+    (*args)->fds->file_write_flag = 0;
+    (*args)->fds->file_read_flag = 0;
+    (*args)->fds->file_size = 0;
+    (*args)->fds->written_size = 0;
+
+    (*args)->fds->write_mode = WRITE_FREE;
+
+    (*args)->fds->data_fd = -1;
+    (*args)->fds->data_write_flag = 0;
+    (*args)->fds->data_read_flag = 0;
+
+    (*args)->fds->command_fd = -1;
+
+    (*args)->working_dir = pathname;
+    (*args)->wd_len = strlen(pathname);
+    (*args)->buffer_length = 0;
+    (*args)->fds->data_length = 0;
+    (*args)->pasv_addrlen = sizeof((*args)->pasv_addr);
+    if(getsockname(fd, (struct sockaddr *)&(*args)->pasv_addr, &(*args)->pasv_addrlen) == -1){
+        perror("getsockname error");
+    }
+    if(buf){
+        strcpy((*args)->buffer+(*args)->buffer_length, buf);
+        (*args)->buffer_length += strlen(buf);
+    }
+}
+
+void event_add(int epoll_fd, int fd, epollArgs *args, unsigned int state) {
     args->fd = fd;
     struct epoll_event event;
     event.events = state;
     event.data.ptr = args;
     int flag = epoll_ctl(epoll_fd, EPOLL_CTL_ADD, fd, &event);
     if(flag == -1){
-        perror("event add error");
+        perror("ads");
+        fprintf(stderr, "%d:%s", errno, strerror(errno));
     }else{
         epoll_size++;
     }
@@ -291,15 +340,52 @@ int ftp_write(int epoll_fd, struct epoll_event *event) {
 int ftp_write_data(int epoll_fd, struct epoll_event *event) {
     int n = -1;
     epollArgs *epollArgs1 = event->data.ptr;
-    n = write(epollArgs1->fds->data_fd, epollArgs1->fds->data, epollArgs1->fds->data_length);
-    if(n <= epollArgs1->fds->data_length){
-        if(n == epollArgs1->fds->data_length && n != 0){
-            close(epollArgs1->fds->data_fd);
+
+    if(epollArgs1->fds->write_mode == FTP_FILE){
+        while (1){
+            if(epollArgs1->fds->file_read_flag){
+                size_t ret = read(epollArgs1->fds->file_fd, epollArgs1->fds->data + epollArgs1->fds->data_length, DATA_SIZE_MAX - epollArgs1->fds->data_length);
+                if( ret < DATA_SIZE_MAX - epollArgs1->fds->data_length){
+                    epollArgs1->fds->data_length += ret;
+                    epollArgs1->fds->file_read_flag = 0;
+                    close(epollArgs1->fds->file_fd);
+                } else if(ret == DATA_SIZE_MAX - epollArgs1->fds->data_length){
+
+                }
+            }//endif
+
+            n = write(epollArgs1->fds->data_fd, epollArgs1->fds->data, epollArgs1->fds->data_length);
+            if(n < epollArgs1->fds->data_length){
+                memmove(epollArgs1->fds->data, epollArgs1->fds->data+n, DATA_SIZE_MAX - n);
+                epollArgs1->fds->data_length -= n;
+                epollArgs1->fds->written_size +=n;
+                break;
+            } else if(n == epollArgs1->fds->data_length){
+                epollArgs1->fds->written_size += n;
+                if(epollArgs1->fds->written_size == epollArgs1->fds->file_size){
+                    close(epollArgs1->fds->data_fd);
+                    epollArgs1->fds->data_fd = -1;
+                    epollArgs1->fds->file_size = 0;
+                    epollArgs1->fds->written_size = 0;
+                    write(epollArgs1->fds->command_fd,"226 File transfered completely\r\n",sizeof("226 File transfered completely\r\n"));
+                    break;
+                }
+            }
         }
+    } else if(epollArgs1->fds->write_mode == FTP_DATA){
+        n = write(epollArgs1->fds->data_fd, epollArgs1->fds->data, epollArgs1->fds->data_length);
+        if(n <= epollArgs1->fds->data_length){
+            if(n == epollArgs1->fds->data_length && n != 0){
+                close(epollArgs1->fds->data_fd);
+            }
+            epollArgs1->fds->data_write_flag = 1;
+            epollArgs1->fds->data_length -= n;
+            memmove(epollArgs1->fds->data, epollArgs1->fds->data+n, epollArgs1->fds->data_length);
+        }
+    } else {
         epollArgs1->fds->data_write_flag = 1;
-        epollArgs1->fds->data_length -= n;
-        memmove(epollArgs1->fds->data, epollArgs1->fds->data+n, epollArgs1->fds->data_length);
     }
+
     return 0;
 }
 
@@ -377,10 +463,11 @@ int handle_list(int epoll_fd, struct epoll_event *event, char *command) {
     }
     strcpy(args->buffer+args->buffer_length,"226 directory list end\r\n");
     args->buffer_length += strlen("226 directory list end\r\n");
+    args->fds->write_mode = FTP_DATA;
+    return 0;
 }
 
 int handle_port(int epoll_fd, struct epoll_event *event, char *command) {
-
     epollArgs *args = event->data.ptr;
     struct sockaddr_in *addr = (struct sockaddr_in *)&args->addr;
     unsigned char *host = (unsigned char *) &addr->sin_addr, *port = (unsigned char *) &addr->sin_port;
@@ -476,9 +563,13 @@ int handle_cwd(int epoll_fd, struct epoll_event *event, char *command) {
 }
 
 int handle_pwd(int epoll_fd, struct epoll_event *event, char *command) {
-    getcwd(workdir,WORKINGDIRECTORY);
-    epollArgs * args = event->data.ptr;
-    strcpy(args->buffer+args->buffer_length,"");
+    (void) epoll_fd;
+    epollArgs *args = event->data.ptr;
+    const char *root = args->working_dir + args->wd_len;
+    if (!*root)
+        root = "/";
+    strcpy(args->buffer+args->buffer_length, "257 \"%s\" is the current directory.\r\n");
+    args->buffer_length += strlen("257 \"%s\" is the current directory.\r\n");
     return 0;
 }
 
@@ -507,8 +598,9 @@ int handle_retr(int epoll_fd, struct epoll_event *event, char *command) {
     filepath[strlen(args->working_dir)] = '/';
     strcpy(filepath+strlen(args->working_dir)+1,command);
     struct stat stat_t;
+    int temp = stat(filepath, &stat_t);
     if(((args->fds->file_fd = open(filepath, O_RDONLY | O_NONBLOCK)) == -1)
-    || (stat(pathname,&stat_t) == -1) ||(!S_ISREG(stat_t.st_mode))){
+    || (temp == -1) ||(!S_ISREG(stat_t.st_mode))){
         strcpy(args->buffer+args->buffer_length, "425 Failed to open file.\r\n");
         args->buffer_length += strlen("425 Failed to open file.\r\n");
         if(args->fds->data_fd != -1){
@@ -517,50 +609,29 @@ int handle_retr(int epoll_fd, struct epoll_event *event, char *command) {
         }
         return -1;
     } else {
-        epollArgs *args1 = NULL;
-        epoll_args_init(&args1, args->fds->file_fd, NULL);
-        args1->fds = args->fds;
-        args1->fds->file_size = stat_t.st_size;
-        args1->fds->file_read_flag = 1;
-        event_add(epoll_fd, args->fds->file_fd, args1,EPOLLIN|EPOLLET);
-    }
-    return 0;
-}
-
-void epoll_args_init(epollArgs **args, int fd, char *buf) {
-    *args = (epollArgs*)malloc(sizeof(epollArgs));
-    (*args)->fd = fd;
-
-    (*args)->fds = (fd_collection*)malloc(sizeof(fd_collection));
-
-    (*args)->fds->file_fd = -1;
-    (*args)->fds->file_write_flag = 0;
-    (*args)->fds->file_read_flag = 0;
-    (*args)->fds->file_size = 0;
-
-    (*args)->fds->data_fd = -1;
-    (*args)->fds->data_write_flag = 0;
-    (*args)->fds->data_read_flag = 0;
-
-    (*args)->fds->command_fd = -1;
-
-    (*args)->working_dir = pathname;
-    (*args)->buffer_length = 0;
-    (*args)->fds->data_length = 0;
-    (*args)->pasv_addrlen = sizeof((*args)->pasv_addr);
-//    if(getsockname(fd, (struct sockaddr *)&(*args)->pasv_addr, &(*args)->pasv_addrlen) == -1){
-//        perror("getsockname error");
-//    }
-    if(buf){
-        strcpy((*args)->buffer+(*args)->buffer_length, buf);
-        (*args)->buffer_length += strlen(buf);
+        int ret = str_cpy(&args, "150 Opening BINARY mode data connection (%d bytes).\r\n", stat_t.st_size);
+        if(ret<(BUFFER_SIZE_MAX-args->buffer_length)){
+            args->buffer_length += ret;
+        } else {
+            //to do
+        }
+        args->fds->write_mode = FTP_FILE;
+        args->fds->file_read_flag = 1;
+        args->fds->file_size = stat_t.st_size;
+        return 0;
     }
 }
 
 
+int str_cpy(epollArgs **args, char *format, ...) {
+    va_list list;
+    va_start(list, format);
+    int ret = vsnprintf((*args)->buffer+(*args)->buffer_length,BUFFER_SIZE_MAX-(*args)->buffer_length, format, list);
+    va_end(list);
+    return ret;
+}
 
 int main(int argc, char *argv[]) {
-
 	//参数解析
 	static struct option long_options[] = {
 		{"root", required_argument,0,'r'},
