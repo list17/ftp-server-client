@@ -412,12 +412,12 @@ int handle_port(int epoll_fd, struct epoll_event *event, char *command) {
                 event_add(epoll_fd, args->fds->data_fd,args1,EPOLLET|EPOLLIN|EPOLLOUT);
                 strcpy(args->buffer+args->buffer_length,"200 PORT command successful.\r\n");
                 args->buffer_length += strlen("200 PORT command successful.\r\n");
-            }else{
+            } else {
                 perror("connect error");
                 strcpy(args->buffer+args->buffer_length,"425 connection error\r\n");
                 args->buffer_length += strlen("425 connection error\r\n");
             }
-        }else{
+        } else {
             epollArgs *args1 = NULL;
             epoll_args_init(&args1, args->fds->data_fd,NULL);
             args1->fds = args->fds;
@@ -486,8 +486,16 @@ int handle_type(int epoll_fd, struct epoll_event *event, char *command) {
     (void) epoll_fd;
     if(strcmp(command, "I") == 0){
         epollArgs *args = event->data.ptr;
-        strcpy(args->buffer+args->buffer_length, "200 Type set to I.\r\n");
-        args->buffer_length += strlen("200 Type set to I.\r\n");
+        strcpy(args->buffer+args->buffer_length, "200 Type I.\r\n");
+        args->buffer_length += strlen("200 Type I.\r\n");
+    } else if (strcmp(command, "A") == 0){
+        epollArgs *args = event->data.ptr;
+        strcpy(args->buffer+args->buffer_length, "200 Switching to ASCII mode.\r\n");
+        args->buffer_length += strlen("200 Switching to ASCII mode.\r\n");
+    } else {
+        epollArgs *args = event->data.ptr;
+        strcpy(args->buffer+args->buffer_length, "500 Unrecognised TYPE command.\r\n");
+        args->buffer_length += strlen("500 Unrecognised TYPE command.\r\n");
     }
     return 0;
 }
@@ -503,13 +511,18 @@ int handle_retr(int epoll_fd, struct epoll_event *event, char *command) {
     || (stat(pathname,&stat_t) == -1) ||(!S_ISREG(stat_t.st_mode))){
         strcpy(args->buffer+args->buffer_length, "425 Failed to open file.\r\n");
         args->buffer_length += strlen("425 Failed to open file.\r\n");
+        if(args->fds->data_fd != -1){
+            close(args->fds->data_fd);
+            args->fds->data_fd = -1;
+        }
+        return -1;
     } else {
         epollArgs *args1 = NULL;
         epoll_args_init(&args1, args->fds->file_fd, NULL);
         args1->fds = args->fds;
         args1->fds->file_size = stat_t.st_size;
         args1->fds->file_read_flag = 1;
-//        event_add(epoll_fd, args->fds->file_fd, args1,EPOLLIN|EPOLLET);
+        event_add(epoll_fd, args->fds->file_fd, args1,EPOLLIN|EPOLLET);
     }
     return 0;
 }
@@ -535,9 +548,9 @@ void epoll_args_init(epollArgs **args, int fd, char *buf) {
     (*args)->buffer_length = 0;
     (*args)->fds->data_length = 0;
     (*args)->pasv_addrlen = sizeof((*args)->pasv_addr);
-    if(getsockname(fd, (struct sockaddr *)&(*args)->pasv_addr, &(*args)->pasv_addrlen) == -1){
-        perror("getsockname error");
-    }
+//    if(getsockname(fd, (struct sockaddr *)&(*args)->pasv_addr, &(*args)->pasv_addrlen) == -1){
+//        perror("getsockname error");
+//    }
     if(buf){
         strcpy((*args)->buffer+(*args)->buffer_length, buf);
         (*args)->buffer_length += strlen(buf);
