@@ -62,7 +62,7 @@ typedef struct epoll_args{
     int fd;
     fd_collection *fds;
 
-    char *working_dir;
+    char working_dir[PATH_MAX];
     size_t wd_len;
     struct sockaddr_storage addr;
     socklen_t addrlen;
@@ -74,7 +74,7 @@ typedef struct epoll_args{
 
 size_t epoll_size = 0;
 char *host = "127.0.0.1";
-char *pathname = "/tmp";
+char pathname[PATH_MAX] = "/tmp";
 char *port = "6789";
 char workdir[WORKINGDIRECTORY];
 int listenfd;
@@ -93,7 +93,6 @@ void handle_epoll(int listenfd);
 int ftp_read(int epoll_fd, struct epoll_event *event, char *buf, int n);
 int ftp_write(int epoll_fd, struct epoll_event *event);
 int ftp_write_data(int epoll_fd, struct epoll_event *event);
-int ftp_write_file(int epoll_fd, struct epoll_event *event);
 
 //handle command
 int handle_command(int epoll_fd, struct epoll_event *event, char* command);
@@ -107,6 +106,7 @@ int handle_cwd(int epoll_fd, struct epoll_event *event, char *command);
 int handle_pwd(int epoll_fd, struct epoll_event *event, char *command);
 int handle_type(int epoll_fd, struct epoll_event *event, char *command);
 int handle_retr(int epoll_fd, struct epoll_event *event, char *command);
+int handle_mkd(int epoll_fd, struct epoll_event *event, char *command);
 
 ftpCommand command_list[] = {
         {"PASS", 4, handle_pass},
@@ -116,7 +116,7 @@ ftpCommand command_list[] = {
         {"CWD",  3, handle_cwd},
         {"DELE", 4, NULL},
         {"LIST", 4, handle_list},
-        {"MKD",  3, NULL},
+        {"MKD",  3, handle_mkd},
         {"PASV", 4, handle_pasv},
         {"PORT", 4, handle_port},
         {"PWD",  3, handle_pwd},
@@ -178,8 +178,12 @@ void epoll_args_init(epollArgs **args, int fd, char *buf) {
 
     (*args)->fds->command_fd = -1;
 
-    (*args)->working_dir = pathname;
-    (*args)->wd_len = strlen(pathname);
+    strcpy((*args)->working_dir, pathname);
+    if((*args)->working_dir[strlen(pathname) - 1] != '/'){
+        (*args)->working_dir[strlen(pathname)] = '/';
+        (*args)->working_dir[strlen(pathname)+1] = '\0';
+    }
+    (*args)->wd_len = strlen((*args)->working_dir);
     (*args)->buffer_length = 0;
     (*args)->fds->data_length = 0;
     (*args)->pasv_addrlen = sizeof((*args)->pasv_addr);
@@ -350,11 +354,16 @@ int ftp_write_data(int epoll_fd, struct epoll_event *event) {
                     epollArgs1->fds->file_read_flag = 0;
                     close(epollArgs1->fds->file_fd);
                 } else if(ret == DATA_SIZE_MAX - epollArgs1->fds->data_length){
-
+                    epollArgs1->fds->data_length += ret;
                 }
             }//endif
 
             n = write(epollArgs1->fds->data_fd, epollArgs1->fds->data, epollArgs1->fds->data_length);
+
+            if(n == -1){
+                break;
+            }
+
             if(n < epollArgs1->fds->data_length){
                 memmove(epollArgs1->fds->data, epollArgs1->fds->data+n, DATA_SIZE_MAX - n);
                 epollArgs1->fds->data_length -= n;
@@ -362,11 +371,13 @@ int ftp_write_data(int epoll_fd, struct epoll_event *event) {
                 break;
             } else if(n == epollArgs1->fds->data_length){
                 epollArgs1->fds->written_size += n;
+                epollArgs1->fds->data_length -= n;
                 if(epollArgs1->fds->written_size == epollArgs1->fds->file_size){
                     close(epollArgs1->fds->data_fd);
                     epollArgs1->fds->data_fd = -1;
                     epollArgs1->fds->file_size = 0;
                     epollArgs1->fds->written_size = 0;
+                    epollArgs1->fds->write_mode = WRITE_FREE;
                     write(epollArgs1->fds->command_fd,"226 File transfered completely\r\n",sizeof("226 File transfered completely\r\n"));
                     break;
                 }
@@ -386,10 +397,6 @@ int ftp_write_data(int epoll_fd, struct epoll_event *event) {
         epollArgs1->fds->data_write_flag = 1;
     }
 
-    return 0;
-}
-
-int ftp_write_file(int epoll_fd, struct epoll_event *event) {
     return 0;
 }
 
@@ -421,11 +428,14 @@ int handle_user(int epoll_fd, struct epoll_event *event, char *command) {
 }
 
 int handle_pass(int epoll_fd, struct epoll_event *event, char *command) {
-    if(strchr(command,'@')!=NULL){
-        epollArgs *args = event->data.ptr;
-        strcpy(args->buffer + args->buffer_length, "230 Guest login ok, access restrictions apply.\r\n");
-        args->buffer_length += strlen("230 Guest login ok, access restrictions apply.\r\n");
-    }
+//    if(strchr(command,'@')!=NULL){
+//        epollArgs *args = event->data.ptr;
+//        strcpy(args->buffer + args->buffer_length, "230 Guest login ok, access restrictions apply.\r\n");
+//        args->buffer_length += strlen("230 Guest login ok, access restrictions apply.\r\n");
+//    }
+    epollArgs *args = event->data.ptr;
+    strcpy(args->buffer + args->buffer_length, "230 Guest login ok, access restrictions apply.\r\n");
+    args->buffer_length += strlen("230 Guest login ok, access restrictions apply.\r\n");
     return 0;
 }
 
@@ -558,18 +568,63 @@ int handle_pasv(int epoll_fd, struct epoll_event *event, char *command) {
 }
 
 int handle_cwd(int epoll_fd, struct epoll_event *event, char *command) {
-    chdir(command);
+    epollArgs *args = event->data.ptr;
+    if(!strcmp(".",command)||!strcmp("./",command)){
+        strcpy(args->buffer+args->buffer_length,"250 Directory changed successfully.\r\n");
+        args->buffer_length += strlen("250 Directory changed successfully.\r\n");
+    } else if(!strcmp("../",command)||!strcmp("..",command)){
+        if(strlen(args->working_dir)==args->wd_len){
+            strcpy(args->buffer+args->buffer_length,"250 Directory changed successfully.\r\n");
+            args->buffer_length += strlen("250 Directory changed successfully.\r\n");
+        } else {
+            for (size_t i= strlen(args->working_dir) - 2; i >0 ; --i) {
+                if(args->working_dir[i] == '/'){
+                    args->working_dir[i+1] = '\0';
+                    strcpy(args->buffer+args->buffer_length,"250 Directory changed successfully.\r\n");
+                    args->buffer_length += strlen("250 Directory changed successfully.\r\n");
+                    break;
+                }
+            }
+        }
+    } else if(!strcmp("/",command)){
+        args->working_dir[args->wd_len] = '\0';
+        strcpy(args->buffer+args->buffer_length,"250 Directory changed successfully.\r\n");
+        args->buffer_length += strlen("250 Directory changed successfully.\r\n");
+    } else {
+        char temp[WORKINGDIRECTORY];
+        strcpy(temp, args->working_dir);
+        strcpy(temp+strlen(args->working_dir), command);
+
+        DIR *dir = opendir(temp);
+        if(dir){
+            strcpy(args->working_dir+strlen(args->working_dir),command);
+            strcpy(args->buffer+args->buffer_length,"250 Directory changed successfully.\r\n");
+            args->buffer_length += strlen("250 Directory changed successfully.\r\n");
+        } else {
+            strcpy(args->buffer+args->buffer_length,"550 Failed to change directory.\r\n");
+            args->buffer_length += strlen("550 Failed to change directory.\r\n");
+            if(ENOENT != errno) {
+                perror("cwd opendir error");
+                return -1;
+            }
+        }
+    }
+    if(args->working_dir[strlen(args->working_dir)-1]!='/'){
+        args->working_dir[strlen(args->working_dir)]='/';
+        args->working_dir[strlen(args->working_dir) +1]='\0';
+    }
     return 0;
 }
 
 int handle_pwd(int epoll_fd, struct epoll_event *event, char *command) {
     (void) epoll_fd;
     epollArgs *args = event->data.ptr;
-    const char *root = args->working_dir + args->wd_len;
+    const char *root = args->working_dir + args->wd_len - 1;
     if (!*root)
         root = "/";
-    strcpy(args->buffer+args->buffer_length, "257 \"%s\" is the current directory.\r\n");
-    args->buffer_length += strlen("257 \"%s\" is the current directory.\r\n");
+
+    int ret = str_cpy(&args, "257 \"%s\" is the current directory.\r\n", root);
+    args->buffer_length += ret;
     return 0;
 }
 
@@ -592,6 +647,8 @@ int handle_type(int epoll_fd, struct epoll_event *event, char *command) {
 }
 
 int handle_retr(int epoll_fd, struct epoll_event *event, char *command) {
+    (void) epoll_fd;
+
     epollArgs *args = event->data.ptr;
     char filepath[1000];
     strcpy(filepath,args->working_dir);
@@ -609,7 +666,7 @@ int handle_retr(int epoll_fd, struct epoll_event *event, char *command) {
         }
         return -1;
     } else {
-        int ret = str_cpy(&args, "150 Opening BINARY mode data connection (%d bytes).\r\n", stat_t.st_size);
+        int ret = str_cpy(&args, "150 Opening BINARY mode data connection (%ld bytes).\r\n", stat_t.st_size);
         if(ret<(BUFFER_SIZE_MAX-args->buffer_length)){
             args->buffer_length += ret;
         } else {
@@ -622,6 +679,14 @@ int handle_retr(int epoll_fd, struct epoll_event *event, char *command) {
     }
 }
 
+int handle_mkd(int epoll_fd, struct epoll_event *event, char *command) {
+    struct stat st = {0};
+
+    if (stat("/some/directory", &st) == -1) {
+        mkdir("/some/directory", 0700);
+    }
+    return 0;
+}
 
 int str_cpy(epollArgs **args, char *format, ...) {
     va_list list;
@@ -630,6 +695,7 @@ int str_cpy(epollArgs **args, char *format, ...) {
     va_end(list);
     return ret;
 }
+
 
 int main(int argc, char *argv[]) {
 	//参数解析
@@ -649,7 +715,7 @@ int main(int argc, char *argv[]) {
     while ((opt = getopt_long(argc, argv, "p:r:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'r':
-                pathname = optarg;
+                strcpy(pathname, optarg);
                 break;
             case 'p':
                 port = optarg;
