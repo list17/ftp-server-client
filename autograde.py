@@ -1,4 +1,4 @@
-#! /usr/bin/python2.7
+#!/usr/bin/python2.7
 import subprocess
 import random
 import time
@@ -9,7 +9,7 @@ import shutil
 import string
 from ftplib import FTP
 
-credit = 40
+credit = 40 
 minor = 3
 major = 8
 
@@ -22,7 +22,6 @@ def build():
     if not (stdout and stderr):
       break
     if stdout and '-Wall' not in stdout:
-      print stdout
       print 'No -Wall argument'
       print 'Your credit is 0'
       exit(0)
@@ -74,20 +73,20 @@ def test(port=21, directory='/tmp'):
       credit -= major
     os.remove(directory + '/' + filename)
     os.remove(filename)
-    # PASV upload
-    ftp2 = FTP()
-    ftp2.connect('127.0.0.1', port)
-    ftp2.login()
-    filename = 'test%d.data' % random.randint(100, 200)
-    create_test_file(filename)
-    if not ftp2.storbinary('STOR %s' % filename, open(filename, 'rb')).startswith('226'):
-      print 'Bad response for STOR'
-      credit -= minor
-    if not filecmp.cmp(filename, directory + '/' + filename):
-      print 'Something wrong with STOR'
-      credit -= major
-    os.remove(directory + '/' + filename)
-    os.remove(filename)
+  #   # PASV upload
+  #   ftp2 = FTP()
+  #   ftp2.connect('127.0.0.1', port)
+  #   ftp2.login()
+  #   filename = 'test%d.data' % random.randint(100, 200)
+  #   create_test_file(filename)
+  #   if not ftp2.storbinary('STOR %s' % filename, open(filename, 'rb')).startswith('226'):
+  #     print 'Bad response for STOR'
+  #     credit -= minor
+  #   if not filecmp.cmp(filename, directory + '/' + filename):
+  #     print 'Something wrong with STOR'
+  #     credit -= major
+  #   os.remove(directory + '/' + filename)
+  #   os.remove(filename)
     # QUIT
     if not ftp.quit().startswith('221'):
       print 'Bad response for QUIT'
@@ -98,9 +97,9 @@ def test(port=21, directory='/tmp'):
     credit = 0
   server.kill()
 
-# build()
-# # Test 1
-# test()
+build()
+# Test 1
+test()
 # # Test 2
 # port = random.randint(2000, 3000)
 # directory = ''.join(random.choice(string.ascii_letters) for x in xrange(10))
@@ -112,6 +111,4 @@ def test(port=21, directory='/tmp'):
 # # Clean
 # subprocess.Popen(['make', 'clean'], stdout=subprocess.PIPE)
 # # Result
-# print 'Your credit is %d' % credit
-
-build()
+print 'Your credit is %d' % credit
