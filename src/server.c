@@ -61,10 +61,10 @@ typedef struct fd_collection{
     ssize_t file_size;
     ssize_t written_size;
 
-    int file_read_flag;
-    int file_write_flag;
-    int data_write_flag;
-    int data_read_flag;
+//    int file_read_flag;
+//    int file_write_flag;
+//    int data_write_flag;
+//    int data_read_flag;
 
     enum TRANS_MODE trans_mode;
     enum WRITE_MODE write_mode;
@@ -74,6 +74,7 @@ typedef struct fd_collection{
 typedef struct epoll_args{
     char buffer[BUFFER_SIZE_MAX];
     int client_exit;
+    int client_login;
     int buffer_length;
 
     int fd;
@@ -124,18 +125,23 @@ int handle_rmd(int epoll_fd, struct epoll_event *event, char *command);
 int handle_dele(int epoll_fd, struct epoll_event *event, char *command);
 int handle_appe(int epoll_fd, struct epoll_event *event, char *command);
 
-ftpCommand command_list[] = {
+ftpCommand command_list_brfore_login[] = {
+        {"USER", 4, handle_user},
         {"PASS", 4, handle_pass},
         {"QUIT", 4, handle_quit},
-        {"USER", 4, handle_user},
+};
+
+ftpCommand command_list[] = {
         {"APPE", 4, handle_appe},
         {"CWD",  3, handle_cwd},
         {"DELE", 4, handle_dele},
         {"LIST", 4, handle_list},
         {"MKD",  3, handle_mkd},
+        {"PASS", 4, handle_pass},
         {"PASV", 4, handle_pasv},
         {"PORT", 4, handle_port},
         {"PWD",  3, handle_pwd},
+        {"QUIT", 4, handle_quit},
         {"RETR", 4, handle_retr},
         {"RMD",  3, handle_rmd},
         {"RNFR,",  4, handle_rnfr},
@@ -144,6 +150,7 @@ ftpCommand command_list[] = {
         {"STOR", 4, handle_stor},
         {"SYST", 4, handle_syst},
         {"TYPE", 4, handle_type},
+        {"USER", 4, handle_user},
 };
 
 int socket_bind(const char *ipaddr, char* port_t) {
@@ -181,8 +188,8 @@ void epoll_args_init(epollArgs **args, int fd, char *buf) {
     (*args)->fds = (fd_collection*)malloc(sizeof(fd_collection));
 
     (*args)->fds->file_fd = -1;
-    (*args)->fds->file_write_flag = 0;
-    (*args)->fds->file_read_flag = 0;
+//    (*args)->fds->file_write_flag = 0;
+//    (*args)->fds->file_read_flag = 0;
     (*args)->fds->file_size = 0;
     (*args)->fds->written_size = 0;
 
@@ -190,8 +197,8 @@ void epoll_args_init(epollArgs **args, int fd, char *buf) {
     (*args)->fds->trans_mode = INIT;
 
     (*args)->fds->data_fd = -1;
-    (*args)->fds->data_write_flag = 0;
-    (*args)->fds->data_read_flag = 0;
+//    (*args)->fds->data_write_flag = 0;
+//    (*args)->fds->data_read_flag = 0;
 
     (*args)->fds->command_fd = -1;
 
@@ -205,6 +212,7 @@ void epoll_args_init(epollArgs **args, int fd, char *buf) {
     (*args)->fds->data_length = 0;
     (*args)->pasv_addrlen = sizeof((*args)->pasv_addr);
     (*args)->client_exit = 0;
+    (*args)->client_login = 0;
     if(getsockname(fd, (struct sockaddr *)&(*args)->pasv_addr, &(*args)->pasv_addrlen) == -1){
         perror("getsockname error");
     }
@@ -289,6 +297,11 @@ int ftp_read(int epoll_fd, struct epoll_event *event, char *buf, int n) {
     int temp = -1;
     epollArgs *args = event->data.ptr;
 
+//    if(args->fds->file_write_flag){
+//        ftp_write_data(epoll_fd, event);
+//        return 0;
+//    }
+
     if(args->client_exit && args->fd != -1){
         close(args->fd);
         args->fd = -1;
@@ -330,10 +343,6 @@ int ftp_read(int epoll_fd, struct epoll_event *event, char *buf, int n) {
             handle_command(epoll_fd, event, command);
         }
         return temp;
-    }else if(args->fd == args->fds->data_fd){
-        //to do 数据传输
-    }else if(args->fd == args->fds->file_fd){
-        //to do
     }
     return temp;
 }
@@ -369,9 +378,9 @@ int ftp_write(int epoll_fd, struct epoll_event *event) {
             }else
                 break;
         }
-        if(epollArgs1->fds->data_write_flag || epollArgs1->fds->file_write_flag){
-            ftp_write_data(epoll_fd, event);
-        }
+//        if(epollArgs1->fds->data_write_flag || epollArgs1->fds->file_write_flag || epollArgs1->fds->file_read_flag){
+//            ftp_write_data(epoll_fd, event);
+//        }
     }else if(epollArgs1->fd == epollArgs1->fds->data_fd){
         ftp_write_data(epoll_fd, event);
     }
@@ -397,47 +406,82 @@ int ftp_write_data(int epoll_fd, struct epoll_event *event) {
     }
 
     if(epollArgs1->fds->write_mode == FTP_FILE){
-        while (1){
-            if(epollArgs1->fds->file_read_flag){
-                ssize_t ret = read(epollArgs1->fds->file_fd, epollArgs1->fds->data + epollArgs1->fds->data_length, DATA_SIZE_MAX - epollArgs1->fds->data_length);
-                if( ret < DATA_SIZE_MAX - epollArgs1->fds->data_length){
-                    epollArgs1->fds->data_length += ret;
-                    epollArgs1->fds->file_read_flag = 0;
-                    close(epollArgs1->fds->file_fd);
-                } else if(ret == DATA_SIZE_MAX - epollArgs1->fds->data_length){
-                    epollArgs1->fds->data_length += ret;
-                }
-            }//endif
-
-            n = write(epollArgs1->fds->data_fd, epollArgs1->fds->data, epollArgs1->fds->data_length);
-
-            if(n == -1){
-                break;
-            }
-
-            if(n < epollArgs1->fds->data_length){
-                memmove(epollArgs1->fds->data, epollArgs1->fds->data+n, DATA_SIZE_MAX - n);
-                epollArgs1->fds->data_length -= n;
-                epollArgs1->fds->written_size +=n;
-                break;
-            } else if(n == epollArgs1->fds->data_length){
-                epollArgs1->fds->written_size += n;
-                epollArgs1->fds->data_length -= n;
-                if(epollArgs1->fds->written_size == epollArgs1->fds->file_size){
-                    close(epollArgs1->fds->data_fd);
-                    if(epollArgs1->fds->trans_mode == PASV){
-                        epollArgs1->fds->pasv_fd = -1;
-                        epollArgs1->fds->trans_mode = INIT;
+        if(epollArgs1->fds->file_read_flag){
+            while (1){
+                if(epollArgs1->fds->file_read_flag){
+                    ssize_t ret = read(epollArgs1->fds->file_fd, epollArgs1->fds->data + epollArgs1->fds->data_length, DATA_SIZE_MAX - epollArgs1->fds->data_length);
+                    if( ret < DATA_SIZE_MAX - epollArgs1->fds->data_length){
+                        epollArgs1->fds->data_length += ret;
+                        epollArgs1->fds->file_read_flag = 0;
+                        close(epollArgs1->fds->file_fd);
+                    } else if(ret == DATA_SIZE_MAX - epollArgs1->fds->data_length){
+                        epollArgs1->fds->data_length += ret;
                     }
-                    epollArgs1->fds->data_fd = -1;
-                    epollArgs1->fds->file_size = 0;
-                    epollArgs1->fds->written_size = 0;
-                    epollArgs1->fds->write_mode = WRITE_FREE;
-                    write(epollArgs1->fds->command_fd,"226 File transfered completely\r\n",sizeof("226 File transfered completely\r\n"));
+                }//endif
+                n = write(epollArgs1->fds->data_fd, epollArgs1->fds->data, epollArgs1->fds->data_length);
+                if(n == -1){
                     break;
                 }
+                if(n < epollArgs1->fds->data_length){
+                    memmove(epollArgs1->fds->data, epollArgs1->fds->data+n, DATA_SIZE_MAX - n);
+                    epollArgs1->fds->data_length -= n;
+                    epollArgs1->fds->written_size +=n;
+                    break;
+                } else if(n == epollArgs1->fds->data_length){
+                    epollArgs1->fds->written_size += n;
+                    epollArgs1->fds->data_length -= n;
+                    if(epollArgs1->fds->written_size == epollArgs1->fds->file_size){
+                        close(epollArgs1->fds->data_fd);
+                        if(epollArgs1->fds->trans_mode == PASV){
+                            epollArgs1->fds->pasv_fd = -1;
+                            epollArgs1->fds->trans_mode = INIT;
+                        }
+                        epollArgs1->fds->data_fd = -1;
+                        epollArgs1->fds->file_size = 0;
+                        epollArgs1->fds->written_size = 0;
+                        epollArgs1->fds->write_mode = WRITE_FREE;
+                        write(epollArgs1->fds->command_fd,"226 File transfered completely\r\n",sizeof("226 File transfered completely\r\n"));
+                        break;
+                    }
+                }
             }
-        }
+        } else if(epollArgs1->fds->file_write_flag) {
+            ssize_t ret = read(epollArgs1->fds->data_fd, epollArgs1->fds->data + epollArgs1->fds->data_length, DATA_SIZE_MAX - epollArgs1->fds->data_length);
+            if(ret == -1 ){
+                if(errno == EWOULDBLOCK||errno == EAGAIN)
+                    return 0;
+                else{
+                    perror("ftp read error:");
+                    return 0;
+                }
+            }
+            else if( ret < DATA_SIZE_MAX - epollArgs1->fds->data_length){
+                if(ret == 0){
+                    close(epollArgs1->fds->data_fd);
+                    epollArgs1->fds->data_fd = -1;
+                    epollArgs1->fds->file_write_flag = 0;
+                    if(epollArgs1->fds->trans_mode == PASV){
+                            epollArgs1->fds->pasv_fd = -1;
+                            epollArgs1->fds->trans_mode = INIT;
+                        }
+                    write(epollArgs1->fds->command_fd,"226 File transfered completely\r\n",sizeof("226 File transfered completely\r\n"));
+                }
+                epollArgs1->fds->data_length += ret;
+                epollArgs1->fds->file_read_flag = 0;
+                close(epollArgs1->fds->data_fd);
+            } else if(ret == DATA_SIZE_MAX - epollArgs1->fds->data_length){
+                epollArgs1->fds->data_length += ret;
+            }
+
+            while (epollArgs1->fds->data_length){
+                n = write(epollArgs1->fds->file_fd, epollArgs1->fds->data, epollArgs1->fds->data_length);
+                if(n == -1){
+                    perror("write file");
+                }
+                memmove(epollArgs1->fds->data, epollArgs1->fds->data+n, DATA_SIZE_MAX - n);
+                epollArgs1->fds->data_length -= n;
+            }
+        }//endif
     } else if(epollArgs1->fds->write_mode == FTP_DATA){
         n = write(epollArgs1->fds->data_fd, epollArgs1->fds->data, epollArgs1->fds->data_length);
         if(n <= epollArgs1->fds->data_length){
@@ -461,12 +505,19 @@ int ftp_write_data(int epoll_fd, struct epoll_event *event) {
 
 int handle_command(int epoll_fd, struct epoll_event *event,char *command) {
 
-    if(strlen(command)<=3){
-//        to do
-    }
-    for(size_t i = 0;i< COMMAND_LENGTH;i++){
-        if(strncmp(command_list[i].command,command,command_list[i].length) == 0){
-            return (*command_list[i].callback)(epoll_fd, event, command[command_list[i].length] == ' ' ? command+command_list[i].length+1 : command + command_list[i].length);
+    epollArgs *args = event->data.ptr;
+    if(args->client_login)
+    {
+        for(size_t i = 0;i< COMMAND_LENGTH;i++){
+            if(strncmp(command_list[i].command,command,command_list[i].length) == 0){
+                return (*command_list[i].callback)(epoll_fd, event, command[command_list[i].length] == ' ' ? command+command_list[i].length+1 : command + command_list[i].length);
+            }
+        }
+    } else {
+        for(size_t i = 0;i< COMMAND_LENGTH;i++){
+            if(strncmp(command_list_brfore_login[i].command,command,command_list_brfore_login[i].length) == 0){
+                return (*command_list_brfore_login[i].callback)(epoll_fd, event, command[command_list_brfore_login[i].length] == ' ' ? command+command_list_brfore_login[i].length+1 : command + command_list_brfore_login[i].length);
+            }
         }
     }
     return 0;
@@ -480,7 +531,9 @@ int handle_user(int epoll_fd, struct epoll_event *event, char *command) {
         strcpy(args->buffer + args->buffer_length,"331 Guest login ok, send your complete e-mail address as password.\r\n");
         args->buffer_length += strlen("331 Guest login ok, send your complete e-mail address as password.\r\n");
     }else{
-        perror("handle_user error");
+        epollArgs *args = event->data.ptr;
+        strcpy(args->buffer + args->buffer_length,"331 Please enter your password.\r\n");
+        args->buffer_length += strlen("331 Please enter your password.\r\n");
         return -1;
     }
     return 0;
@@ -489,12 +542,8 @@ int handle_user(int epoll_fd, struct epoll_event *event, char *command) {
 int handle_pass(int epoll_fd, struct epoll_event *event, char *command) {
     (void) epoll_fd;
     (void) command;
-//    if(strchr(command,'@')!=NULL){
-//        epollArgs *args = event->data.ptr;
-//        strcpy(args->buffer + args->buffer_length, "230 Guest login ok, access restrictions apply.\r\n");
-//        args->buffer_length += strlen("230 Guest login ok, access restrictions apply.\r\n");
-//    }
     epollArgs *args = event->data.ptr;
+    args->client_login = 1;
     strcpy(args->buffer + args->buffer_length, "230 Guest login ok, access restrictions apply.\r\n");
     args->buffer_length += strlen("230 Guest login ok, access restrictions apply.\r\n");
     return 0;
@@ -564,8 +613,8 @@ int handle_port(int epoll_fd, struct epoll_event *event, char *command) {
                 epollArgs *args1;
                 epoll_args_init(&args1, args->fds->data_fd,NULL);
                 args1->fds = args->fds;
-                event_add(epoll_fd, args->fds->data_fd,args1,EPOLLET|EPOLLIN|EPOLLOUT);
-                args->fds->trans_mode = PORT;
+                event_add(epoll_fd, args->fds->data_fd,args1,EPOLLIN | EPOLLOUT);
+                args1->fds->trans_mode = PORT;
                 strcpy(args->buffer+args->buffer_length,"200 PORT command successful.\r\n");
                 args->buffer_length += strlen("200 PORT command successful.\r\n");
             } else {
@@ -578,7 +627,7 @@ int handle_port(int epoll_fd, struct epoll_event *event, char *command) {
             epoll_args_init(&args1, args->fds->data_fd,NULL);
             args1->fds = args->fds;
             args->fds->trans_mode = PORT;
-            event_add(epoll_fd, args->fds->data_fd,args1, EPOLLET|EPOLLIN|EPOLLOUT);
+            event_add(epoll_fd, args->fds->data_fd,args1, EPOLLIN | EPOLLOUT | EPOLLET);
             strcpy(args->buffer+args->buffer_length,"200 PORT command successful.\r\n");
             args->buffer_length += strlen("200 PORT command successful.\r\n");
         }
@@ -720,8 +769,7 @@ int handle_retr(int epoll_fd, struct epoll_event *event, char *command) {
     }
     char filepath[1000];
     strcpy(filepath,args->working_dir);
-    filepath[strlen(args->working_dir)] = '/';
-    strcpy(filepath+strlen(args->working_dir)+1,command);
+    strcpy(filepath+strlen(args->working_dir),command);
     struct stat stat_t;
     int temp = stat(filepath, &stat_t);
     if(((args->fds->file_fd = open(filepath, O_RDONLY | O_NONBLOCK)) == -1)
@@ -772,7 +820,35 @@ int handle_quit(int epoll_fd, struct epoll_event *event, char *command) {
 }
 
 int handle_stor(int epoll_fd, struct epoll_event *event, char *command) {
-    return 0;
+    (void) epoll_fd;
+    epollArgs *args = event->data.ptr;
+    if(args->fds->data_fd == -1 && args->fds->pasv_fd == -1){
+        strcpy(args->buffer + args->buffer_length, "425 Use PORT or PASV first.\r\n");
+        args->buffer_length += strlen("425 Use PORT or PASV first.\r\n");
+        return -1;
+    }
+    char filepath[1000];
+    strcpy(filepath,args->working_dir);
+    strcpy(filepath+strlen(args->working_dir),command);
+    if(((args->fds->file_fd = open(filepath, O_WRONLY | O_CREAT | O_NONBLOCK | O_TRUNC, 0644)) == -1)){
+        strcpy(args->buffer+args->buffer_length, "425 Failed to open file.\r\n");
+        args->buffer_length += strlen("425 Failed to open file.\r\n");
+        if(args->fds->data_fd != -1){
+            close(args->fds->data_fd);
+            args->fds->data_fd = -1;
+        }
+        return -1;
+    } else {
+        int ret = str_cpy(&args, "150 The server is ready.\r\n");
+        if(ret<(BUFFER_SIZE_MAX-args->buffer_length)){
+            args->buffer_length += ret;
+        } else {
+            //to do
+        }
+        args->fds->write_mode = FTP_FILE;
+        args->fds->file_write_flag = 1;
+        return 0;
+    }
 }
 
 int handle_rnfr(int epoll_fd, struct epoll_event *event, char *command) {
