@@ -111,8 +111,8 @@ int handle_type(int epoll_fd, struct epoll_event *event, char *command);
 int handle_retr(int epoll_fd, struct epoll_event *event, char *command);
 int handle_mkd(int epoll_fd, struct epoll_event *event, char *command);
 int handle_quit(int epoll_fd, struct epoll_event *event, char *command);
-
 int handle_stor(int epoll_fd, struct epoll_event *event, char *command);
+
 int handle_rnfr(int epoll_fd, struct epoll_event *event, char *command);
 int handle_rnto(int epoll_fd, struct epoll_event *event, char *command);
 int handle_size(int epoll_fd, struct epoll_event *event, char *command);
@@ -560,7 +560,12 @@ int handle_list(int epoll_fd, struct epoll_event *event, char *command) {
         int fd_t = accept(args->fds->pasv_fd, NULL, NULL);
         if (fd_t != -1) {
             args->fds->data_fd = fd_t;
-            epoll_ctl(epoll_fd,EPOLL_CTL_MOD, args->fds->pasv_fd, EPOLLOUT);
+            int flags = fcntl(args->fds->data_fd, F_GETFL, 0);
+            if (flags == -1 || fcntl(args->fds->data_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+                perror("fcntl error");
+            }
+
+//            epoll_ctl(epoll_fd,EPOLL_CTL_MOD, args->fds->pasv_fd, EPOLLOUT);
             return 0;
         } else {
             if (errno != EAGAIN)
@@ -614,7 +619,7 @@ int handle_port(int epoll_fd, struct epoll_event *event, char *command) {
             epoll_args_init(&args1, args->fds->data_fd,NULL);
             args1->fds = args->fds;
             args->fds->trans_mode = PORT;
-            event_add(epoll_fd, args->fds->data_fd,args1, EPOLLIN | EPOLLOUT | EPOLLET);
+            event_add(epoll_fd, args->fds->data_fd,args1, EPOLLIN | EPOLLOUT);
             strcpy(args->buffer+args->buffer_length,"200 PORT command successful.\r\n");
             args->buffer_length += strlen("200 PORT command successful.\r\n");
         }
