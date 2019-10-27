@@ -1,3 +1,5 @@
-/cmake-build-*
-/venv
+/ftp-server/cmake-build-*
+/*/venv
 *.data
+/*/__pycache__
+/*/.idea

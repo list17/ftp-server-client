@@ -137,7 +137,7 @@ ftpCommand command_list_brfore_login[] = {
 };
 
 ftpCommand command_list[] = {
-        {"ABOR",4,handle_abor},
+        {"ABOR", 4,handle_abor},
         {"APPE", 4, handle_appe},
         {"CWD",  3, handle_cwd},
         {"DELE", 4, handle_dele},
@@ -150,8 +150,8 @@ ftpCommand command_list[] = {
         {"QUIT", 4, handle_quit},
         {"RETR", 4, handle_retr},
         {"RMD",  3, handle_rmd},
-        {"RNFR,",  4, handle_rnfr},
-        {"RNTO,",  4, handle_rnto},
+        {"RNFR,",4, handle_rnfr},
+        {"RNTO,",4, handle_rnto},
         {"SIZE", 4, handle_size},
         {"STOR", 4, handle_stor},
         {"SYST", 4, handle_syst},
@@ -439,12 +439,13 @@ int ftp_write_data(int epoll_fd, struct epoll_event *event, int mode) {
             close(epollArgs1->fds->data_fd);
             epollArgs1->fds->data_fd = -1;
             epollArgs1->fds->write_mode = WRITE_FREE;
+            event_delete(epoll_fd, epollArgs1->fds->data_fd,EPOLLOUT | EPOLLIN);
             if (epollArgs1->fds->trans_mode == PASV) {
                 epollArgs1->fds->pasv_fd = -1;
                 epollArgs1->fds->trans_mode = INIT;
             }
             write(epollArgs1->fds->command_fd, "226 File transfered completely\r\n",
-                  sizeof("226 File transfered completely\r\n"));
+                  strlen("226 File transfered completely\r\n"));
             return 0;
         }
         epollArgs1->fds->data_length += ret;
@@ -480,13 +481,14 @@ int ftp_write_data(int epoll_fd, struct epoll_event *event, int mode) {
                 epollArgs1->fds->file_fd = -1;
                 epollArgs1->fds->data_fd = -1;
                 epollArgs1->fds->write_mode = WRITE_FREE;
+                event_delete(epoll_fd, epollArgs1->fds->data_fd, EPOLLIN|EPOLLOUT);
                 if (epollArgs1->fds->trans_mode == PASV) {
                     epollArgs1->fds->pasv_fd = -1;
                     epollArgs1->fds->trans_mode = INIT;
                 }
                 epollArgs1->fds->ready_to_write = 0;
                 write(epollArgs1->fds->command_fd, "226 File transfered completely\r\n",
-                      sizeof("226 File transfered completely\r\n"));
+                      strlen("226 File transfered completely\r\n"));
                 return 0;
             }
             epollArgs1->fds->data_length += ret;
@@ -619,6 +621,8 @@ int handle_list(int epoll_fd, struct epoll_event *event, char *command) {
             if (errno != EAGAIN)
                 perror("PASV accept");
         }
+    } else {
+        event_modify(epoll_fd, args->fds->data_fd, &args, EPOLLOUT);
     }
     return 0;
 }
@@ -848,6 +852,8 @@ int handle_retr(int epoll_fd, struct epoll_event *event, char *command) {
                 if (errno != EAGAIN)
                     perror("PASV accept");
             }
+        } else {
+            event_modify(epoll_fd, args->fds->data_fd, &args, EPOLLOUT);
         }
         return 0;
     }
@@ -873,8 +879,8 @@ int handle_quit(int epoll_fd, struct epoll_event *event, char *command) {
     (void) epoll_fd;
     (void) command;
     epollArgs *args = event->data.ptr;
-    strcpy(args->buffer+args->buffer_length,"221 see you.\r\n");
-    args->buffer_length += strlen("221 see you.\r\n");
+    strcpy(args->buffer+args->buffer_length,"221 Goodbye.\r\n");
+    args->buffer_length += strlen("221 Goodbye.\r\n");
     remove_connections(&args);
     args->client_exit = 1;
     return 0;
@@ -925,6 +931,8 @@ int handle_stor(int epoll_fd, struct epoll_event *event, char *command) {
                 if (errno != EAGAIN)
                     perror("PASV accept");
             }
+        } else {
+            event_modify(epoll_fd, args->fds->data_fd, &args, EPOLLIN);
         }
         return 0;
     }

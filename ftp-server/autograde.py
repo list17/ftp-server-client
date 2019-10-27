@@ -36,7 +36,7 @@ def create_test_file(filename):
     f.write(data)
   f.close()
 
-def test(port=6789, directory='/tmp'):
+def test(port=21, directory='/tmp'):
   global credit
   if port == 21 and directory == '/tmp':
     server = subprocess.Popen('./server', stdout=subprocess.PIPE)
@@ -61,7 +61,7 @@ def test(port=6789, directory='/tmp'):
     if ftp.sendcmd('TYPE I') != '200 Type set to I.':
       print 'Bad response for TYPE I'
       credit -= minor
-    # PORT download
+    # # PORT download
     filename = 'test%d.data' % random.randint(100, 200)
     create_test_file(directory + '/' + filename)
     ftp.set_pasv(False)
@@ -88,10 +88,10 @@ def test(port=6789, directory='/tmp'):
     os.remove(directory + '/' + filename)
     os.remove(filename)
     # QUIT
-    # if not ftp.quit().startswith('221'):
-    #   print 'Bad response for QUIT'
-    #   credit -= minor
-    # ftp2.quit()
+    if not ftp.quit().startswith('221'):
+      print 'Bad response for QUIT'
+      credit -= minor
+    ftp2.quit()
   except Exception as e:
     print 'Exception occurred:', e
     credit = 0
