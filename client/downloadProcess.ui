@@ -36,14 +36,14 @@
     </rect>
    </property>
    <layout class="QGridLayout" name="gridLayout">
-    <item row="0" column="0" colspan="2">
-     <widget class="QProgressBar" name="progressBar">
-      <property name="value">
-       <number>0</number>
+    <item row="1" column="0">
+     <widget class="QLabel" name="label_3">
+      <property name="text">
+       <string>已下载：</string>
       </property>
      </widget>
     </item>
-    <item row="1" column="0">
+    <item row="0" column="0">
      <widget class="QLabel" name="label_2">
       <property name="text">
        <string>总大小：</string>
@@ -51,21 +51,14 @@
      </widget>
     </item>
     <item row="1" column="1">
-     <widget class="QLabel" name="sum_label">
+     <widget class="QLabel" name="download_label">
       <property name="text">
        <string>0</string>
       </property>
      </widget>
     </item>
-    <item row="2" column="0">
-     <widget class="QLabel" name="label_3">
-      <property name="text">
-       <string>已下载：</string>
-      </property>
-     </widget>
-    </item>
-    <item row="2" column="1">
-     <widget class="QLabel" name="download_label">
+    <item row="0" column="1">
+     <widget class="QLabel" name="sum_label">
       <property name="text">
        <string>0</string>
       </property>
@@ -83,17 +76,7 @@
     </rect>
    </property>
    <property name="text">
-    <string>开始下载</string>
-   </property>
-  </widget>
-  <widget class="QLineEdit" name="lineEdit">
-   <property name="geometry">
-    <rect>
-     <x>150</x>
-     <y>150</y>
-     <width>113</width>
-     <height>34</height>
-    </rect>
+    <string>取消</string>
    </property>
   </widget>
  </widget>

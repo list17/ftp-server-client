@@ -1,4 +1,5 @@
 import sys
+import re
 from socket import *
 from socket import _GLOBAL_DEFAULT_TIMEOUT
 import string
@@ -16,8 +17,9 @@ class FTPClient:
         self.read_size = 20000
         self.read_dir = ""
         self.upload_filename = ""
+        self.upload_filename_full = ""
         self.timeout = _GLOBAL_DEFAULT_TIMEOUT
-        self.rest = None
+        self.rest = 0
 
         self.get_file_size = 0
         self.put_file_size = 0
@@ -30,9 +32,10 @@ class FTPClient:
 
         self.directory = []
 
+        self.passive = 0
+
         # self.sock = socket.create_connection((self.host, self.port), self.timeout)
         self.af = self.socket_t.family
-
         self.data_socket_t = socket(AF_INET, SOCK_STREAM)
 
     def cmd_user(self):
@@ -63,6 +66,14 @@ class FTPClient:
         if receive.split(b' ')[0] == b'221':
             return 1
         return 0
+
+    def cmd_rest(self):
+        self.socket_t.send(("REST %d" % self.rest).encode(self.encoding))
+        receive = self.socket_t.recv(self.read_size)
+        if receive.split(b' ')[0] == b'350':
+            return 1
+        return 0
+
 
     def cmd_delete(self, filename):
         self.socket_t.send(("DELE %s\r\n" % filename).encode(self.encoding))
@@ -135,87 +146,92 @@ class FTPClient:
             return receive
         return None
 
+    def cmd_pasv(self):
+        self.socket_t.send("PASV\r\n".encode(self.encoding))
+        receive = self.socket_t.recv(self.read_size)
+        if receive.split(b' ')[0] == b'227':
+            return receive
+        return None
+
     def cmd_list(self, blocksize=8192, rest=None):
         size = None
-        with self.makeport() as sock:
-            if self.rest is not None:
-                # self.sendcmd("REST %s" % rest)
-                pass
-            self.socket_t.send("LIST\r\n".encode(self.encoding))
-            receive1 = self.socket_t.recv(self.read_size)
-            if receive1.count(b'\r\n') == 1:
-                receive2 = self.socket_t.recv(self.read_size)
-            if receive1.split(b' ')[0] == b'150':
-                conn, sockaddr = sock.accept()
-                if self.timeout is not _GLOBAL_DEFAULT_TIMEOUT:
-                    conn.settimeout(self.timeout)
-                while 1:
-                    data = conn.recv(blocksize)
-                    if not data:
-                        break
-                    for i in data.decode('utf-8').split('\n'):
-                        self.directory.append(i.split(' '))
-                return 1
-        return 0
-
-    def cmd_retr(self, filename, callback, dialog, blocksize=8192, rest=None):
-            self.cmd_type('I')
-            size = None
+        conn = None
+        if self.passive:
+            host, port = self.makepasv()
+            conn = create_connection((host, port), self.timeout, None)
+        elif not self.passive:
             with self.makeport() as sock:
                 if self.rest is not None:
                     # self.sendcmd("REST %s" % rest)
                     pass
-                self.socket_t.send(("RETR %s\r\n" % filename).encode(self.encoding))
-                receive1 = self.socket_t.recv(self.read_size)
-                if receive1.split(b' ')[0] == b'150':
-                    self.get_file_size = int(receive1.split(b'(')[1].split(b' ')[0].decode('utf-8'))
-                    conn, sockaddr = sock.accept()
-                    if self.timeout is not _GLOBAL_DEFAULT_TIMEOUT:
-                        conn.settimeout(self.timeout)
-                    while 1:
-                        data = conn.recv(blocksize)
-                        if not data:
-                            break
-                        self.get_file_size_already += sys.getsizeof(data)
-                        callback(data)
-                    receive2 = self.socket_t.recv(self.read_size)
-                    return 1
-            return 0
+                conn, sockaddr = sock.accept()
+        self.socket_t.send("LIST\r\n".encode(self.encoding))
+        receive1 = self.socket_t.recv(self.read_size)
+        while 1:
+            data = conn.recv(blocksize)
+            if not data:
+                break
+            for i in data.decode('utf-8').split('\n'):
+                self.directory.append(i.split(' '))
+        if receive1.count(b'\r\n') == 1:
+            receive2 = self.socket_t.recv(self.read_size)
+        return 1
 
-
-    def cmd_stor(self, blocksize=8192, rest=None):
+    def cmd_retr(self, filename, callback, dialog, blocksize=8192, rest=None):
         self.cmd_type('I')
         size = None
-        with self.makeport() as sock:
-            if self.rest is not None:
-                # self.sendcmd("REST %s" % rest)
-                pass
-            self.socket_t.send(("STOR %s\r\n" % self.upload_filename).encode(self.encoding))
-            receive1 = self.socket_t.recv(self.read_size)
-            if receive1.split(b' ')[0] == b'150':
-                self.get_file_size = int(receive1.split(b'(')[1].split(b' ')[0].decode('utf-8'))
+        conn = None
+        if self.passive:
+            host, port = self.makepasv()
+            conn = create_connection((host, port), self.timeout, None)
+        elif not self.passive:
+            with self.makeport() as sock:
+                if self.rest is not None:
+                    # self.sendcmd("REST %s" % rest)
+                    pass
                 conn, sockaddr = sock.accept()
                 if self.timeout is not _GLOBAL_DEFAULT_TIMEOUT:
                     conn.settimeout(self.timeout)
-                while 1:
-                    data = conn.recv(blocksize)
-                    if not data:
-                        break
-                    self.get_file_size_already += sys.getsizeof(data)
-                receive2 = self.socket_t.recv(self.read_size)
-                return 1
-        return 0
+        self.socket_t.send(("RETR %s\r\n" % filename).encode(self.encoding))
+        receive1 = self.socket_t.recv(self.read_size)
+        if receive1.split(b' ')[0] == b'150':
+            self.get_file_size = int(receive1.split(b'(')[1].split(b' ')[0].decode('utf-8'))
+        while 1:
+            data = conn.recv(blocksize)
+            if not data:
+                break
+            self.get_file_size_already += sys.getsizeof(data)
+            callback(data)
+        if receive1.count(b'\r\n') == 1:
+            receive2 = self.socket_t.recv(self.read_size)
+        return 1
 
-
-    def sendport(self, host, port):
-        '''Send a PORT command with the current host and the given
-        port number.
-        '''
-        hbytes = host.split('.')
-        pbytes = [repr(port // 256), repr(port % 256)]
-        bytes = hbytes + pbytes
-        cmd = 'PORT ' + ','.join(bytes)
-        return self.voidcmd(cmd)
+    def cmd_stor(self, fp, callback=None, blocksize=8192, rest=None):
+        self.cmd_type('I')
+        size = None
+        conn = None
+        if self.passive:
+            host, port = self.makepasv()
+            conn = create_connection((host, port), self.timeout, None)
+        elif not self.passive:
+            with self.makeport() as sock:
+                if self.rest is not None:
+                    # self.sendcmd("REST %s" % rest)
+                    pass
+                conn, sockaddr = sock.accept()
+        self.socket_t.send(("STOR %s\r\n" % self.upload_filename).encode(self.encoding))
+        receive1 = self.socket_t.recv(self.read_size)
+        while 1:
+            buf = fp.read(blocksize)
+            if not buf:
+                break
+            conn.sendall(buf)
+            if callback:
+                callback(buf)
+        conn.close()
+        if receive1.count(b'\r\n') == 1:
+            receive2 = self.socket_t.recv(self.read_size)
+        return 1
 
     def makeport(self):
         err = None
@@ -227,10 +243,23 @@ class FTPClient:
         sock.listen(1)
         port = sock.getsockname()[1]  # Get proper port
         host = self.socket_t.getsockname()[0]  # Get proper host
-        if self.af == AF_INET:
-            resp = self.cmd_port(host, port)
-        else:
-            resp = self.cmd_port(host, port)
+        resp = self.cmd_port(host, port)
         if self.timeout is not _GLOBAL_DEFAULT_TIMEOUT:
             sock.settimeout(self.timeout)
         return sock
+
+    def makepasv(self):
+        resp = self.cmd_pasv().decode('utf-8')
+        re_227 = re.compile(r'(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)', re.ASCII)
+        m = re_227.search(resp)
+        numbers = m.groups()
+        host = '.'.join(numbers[:4])
+        port = (int(numbers[4]) << 8) + int(numbers[5])
+        return host, port
+
+    def cmd_abor(self):
+        self.socket_t.send("ABOR\r\n".encode(self.encoding))
+        receive = self.socket_t.recv(self.read_size)
+        if receive.split(b' ')[0] == b'225':
+            return 1
+        return 0

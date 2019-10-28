@@ -1,5 +1,6 @@
 import sys
-import time
+import threading
+import _thread
 
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
@@ -8,6 +9,7 @@ from address_settings import Ui_Dialog as AddrSetPage
 from file import Ui_ListFTP as FilePage
 from renameWindow import Ui_Dialog as RenamePage
 from mkdirWindow import Ui_Dialog as MkdirPage
+from modeSettingWindow import Ui_Dialog as ModeSettingPage
 from downloadProBarPage import Ui_Dialog as DownloadPage
 from ftp_client import FTPClient
 
@@ -18,6 +20,7 @@ class BasicVar:
         self.rename_page = RenamePage()
         self.download_page = DownloadPage()
         self.mkdir_page = MkdirPage()
+        self.mode_setting_page = ModeSettingPage()
         self.file_page = FilePage()
 
 
@@ -59,6 +62,7 @@ def confirm_btn_clicked(main_window):
             global_var.file_page.create_btn.clicked.connect(lambda: handle_mkdir())
             global_var.file_page.upload_btn.clicked.connect(lambda: handle_upload_btn_clicked(main_window))
             global_var.file_page.begin_upload_btn.clicked.connect(lambda: handle_begin_upload_btn_clicked())
+            global_var.file_page.menusettings.triggered[QAction].connect(lambda: handle_mode_setting())
 
 
 #退出按钮点击函数
@@ -93,29 +97,43 @@ def set_address(action):
 
 
 def handle_download():
+    thread = threading.Thread(target=download_thread)
+    thread.start()
     download_page = QDialog()
     global_var.download_page.setupUi(download_page)
     download_page.show()
     global_var.download_page.begin_btn.clicked.connect(lambda: download_btn_clicked(download_page))
+    global timer
+    timer.start()
     download_page.exec_()
 
 
 def download_btn_clicked(dialog):
-    client.cmd_retr(global_var.file_page.listWidget.currentItem().text()[
-                      global_var.file_page.listWidget.currentItem().text().find(':') + 4:],
-                    open(global_var.file_page.listWidget.currentItem().text()[
-                      global_var.file_page.listWidget.currentItem().text().find(':') + 4:], 'wb').write,
-                    global_var.download_page)
-    # sum = 10000
-    # global_var.download_page.sum_label.setText(str(sum))
-    # global_var.download_page.sum_label.timerEvent()
-    # a = 0
-    # while a != sum:
-    #     global_var.download_page.lineEdit.setText(str(a))
-    #     dialog.update()
-    #     a += 100
-    #     time.sleep(0.1)
+    client.cmd_abor()
     dialog.close()
+
+
+
+def download_update():
+    global global_var, client, timer
+    global_var.download_page.sum_label.setText(str(client.get_file_size))
+    global_var.download_page.download_label.setText(str(client.get_file_size_already))
+    if client.get_file_size_already < client.get_file_size:
+        timer = threading.Timer(0.5, download_update)
+        timer.start()
+    else:
+        timer.cancel()
+
+timer = threading.Timer(0.5, download_update)
+
+
+def download_thread():
+    global client, global_var
+    client.cmd_retr(global_var.file_page.listWidget.currentItem().text()[
+                    global_var.file_page.listWidget.currentItem().text().find(':') + 4:],
+                    open(global_var.file_page.listWidget.currentItem().text()[
+                         global_var.file_page.listWidget.currentItem().text().find(':') + 4:], 'wb').write,
+                    global_var.download_page)
 
 
 def handle_rename():
@@ -192,6 +210,7 @@ def listWidgetContext(point):
         popMenu.exec_(QCursor.pos())
 
 
+# 刷新目录
 def create_list():
     client.directory = []
     client.cmd_list()
@@ -219,25 +238,41 @@ def handle_return_btn_clicked():
 
 
 def handle_upload_btn_clicked(widget):
-    # absolute_path is a QString object
     absolute_path = QFileDialog.getOpenFileName(widget, "Open file", ".", "files(*.*)", )
-
     if absolute_path:
         cur_path = QDir('.')
         relative_path = cur_path.relativeFilePath(absolute_path)
-        client.upload_filename = absolute_path
+        client.upload_filename = relative_path.split('/')[-1]
+        client.upload_filename_full = absolute_path
         global_var.file_page.lineEdit.setText(relative_path)
 
 
 def handle_begin_upload_btn_clicked():
-    pass
+    client.cmd_stor(open(client.upload_filename_full, "rb"))
+    create_list()
+
+
+# 文件传输模式设置
+def handle_mode_setting():
+    mode_page = QDialog()
+    global_var.mode_setting_page.setupUi(mode_page)
+    mode_page.show()
+    global_var.mode_setting_page.buttonBox.accepted.connect(lambda: mode_set_confirm_btn_clicked())
+    global_var.mode_setting_page.buttonBox.rejected.connect(lambda: mode_set_exit_btn_clicked(mode_page))
+    mode_page.exec_()
+
+
+def mode_set_confirm_btn_clicked():
+    client.passive = 1
+    if global_var.mode_setting_page.radioButton.isChecked():
+        client.passive = 0
+    elif global_var.mode_setting_page.radioButton_2.isChecked():
+        client.passive = 1
+
+
+def mode_set_exit_btn_clicked(action):
+    action.close()
 
 
 if __name__ == '__main__':
     main()
-    # client.username = "anonymous"
-    # client.cmd_user()
-    # client.cmd_pass()
-    # client.cmd_syst()
-    # client.cmd_list(print())
-    # client.cmd_syst()

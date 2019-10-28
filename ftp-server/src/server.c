@@ -17,7 +17,7 @@
 #define EVENT_MAX 21
 #define BUFFER_SIZE_MAX 4096
 #define COMMAND_SIZE 200
-#define COMMAND_LENGTH 20
+#define COMMAND_LENGTH 22
 #define COMMAND_LENGTH_BEFORE_LOGIN 3
 #define WORKINGDIRECTORY 100
 #define DATA_SIZE_MAX 4096*4
@@ -597,7 +597,7 @@ int handle_list(int epoll_fd, struct epoll_event *event, char *command) {
     FILE *stream;
 
     strcpy(lscommand,"ls -Nn ");
-    strncpy(lscommand + 7, args->working_dir, strlen(args->working_dir));
+    strcpy(lscommand + 7, args->working_dir);
     stream = popen( lscommand, "r" );
     int ret = fread( args->fds->data+args->fds->data_length, sizeof(char), DATA_SIZE_MAX - args->fds->data_length, stream);
     args->fds->data_length += ret;
@@ -751,7 +751,7 @@ int handle_cwd(int epoll_fd, struct epoll_event *event, char *command) {
     } else {
         char temp[WORKINGDIRECTORY];
         memset(temp, '\0', WORKINGDIRECTORY);
-        strncpy(temp, args->working_dir, strlen(args->working_dir));
+        strcpy(temp, args->working_dir);
         strcpy(temp+strlen(args->working_dir), command);
 
         DIR *dir = opendir(temp);
