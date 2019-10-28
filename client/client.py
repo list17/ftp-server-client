@@ -1,4 +1,5 @@
 import sys
+import time
 
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
@@ -6,6 +7,7 @@ from login import Ui_MainWindow as LoginPage
 from address_settings import Ui_Dialog as AddrSetPage
 from file import Ui_ListFTP as FilePage
 from renameWindow import Ui_Dialog as RenamePage
+from downloadProBarPage import Ui_Dialog as DownloadPage
 from ftp_client import FTPClient
 
 class BasicVar:
@@ -13,6 +15,7 @@ class BasicVar:
         self.login_page = LoginPage()
         self.addr_set_page = AddrSetPage()
         self.rename_page = RenamePage()
+        self.download_page = DownloadPage()
         self.file_page = FilePage()
 
 
@@ -33,7 +36,6 @@ def main():
     global_var.login_page.confirm_btn.clicked.connect(lambda: confirm_btn_clicked(login_page))
     global_var.login_page.exit_btn.clicked.connect(lambda: exit_btn_clicked(login_page))
     global_var.login_page.menu.triggered[QAction].connect(lambda: set_address(global_var.login_page.actionaddress_settings))
-
     sys.exit(app.exec_())
 
 
@@ -52,12 +54,11 @@ def confirm_btn_clicked(main_window):
             if not client.cmd_pwd():
                 msg = QMessageBox(QMessageBox.Critical, "获取目录失败", "error")
                 msg.exec_()
-            client.cmd_list()
-            for item in client.directory:
-                a = QListWidgetItem(' '.join(item))
-                global_var.file_page.listWidget.addItem(a)
+            create_list()
             global_var.file_page.listWidget.setContextMenuPolicy(Qt.CustomContextMenu)
             global_var.file_page.listWidget.customContextMenuRequested[QPoint].connect(listWidgetContext)
+            global_var.file_page.listWidget.doubleClicked.connect(lambda: handle_cmd())
+            global_var.file_page.return_btn.clicked.connect(lambda: handle_return_btn_clicked())
 
 
 #退出按钮点击函数
@@ -91,13 +92,33 @@ def set_address(action):
         addr_set_page.exec_()
 
 
-def handle_download(action):
-    print(action.text())
-    get_filename = global_var.file_page.listWidget.currentItem().text().split(' ')[-1]
-    client.cmd_retr(get_filename, open(get_filename, 'wb').write)
+def handle_download():
+    download_page = QDialog()
+    global_var.download_page.setupUi(download_page)
+    download_page.show()
+    global_var.download_page.begin_btn.clicked.connect(lambda: download_btn_clicked(download_page))
+    download_page.exec_()
 
 
-def handle_rename(action):
+def download_btn_clicked(dialog):
+    client.cmd_retr(global_var.file_page.listWidget.currentItem().text()[
+                      global_var.file_page.listWidget.currentItem().text().find(':') + 4:],
+                    open(global_var.file_page.listWidget.currentItem().text()[
+                      global_var.file_page.listWidget.currentItem().text().find(':') + 4:], 'wb').write,
+                    global_var.download_page)
+    # sum = 10000
+    # global_var.download_page.sum_label.setText(str(sum))
+    # global_var.download_page.sum_label.timerEvent()
+    # a = 0
+    # while a != sum:
+    #     global_var.download_page.lineEdit.setText(str(a))
+    #     dialog.update()
+    #     a += 100
+    #     time.sleep(0.1)
+    dialog.close()
+
+
+def handle_rename():
     rename_page = QDialog()
     global_var.rename_page.setupUi(rename_page)
     rename_page.show()
@@ -107,27 +128,73 @@ def handle_rename(action):
 
 
 def rename_confirm_btn_clicked():
-    print(global_var.rename_page.lineEdit.text())
+    client.cmd_rename(global_var.file_page.listWidget.currentItem().text()[global_var.file_page.listWidget.currentItem().text().find(':') + 4:], global_var.rename_page.lineEdit.text())
+    create_list()
+    # print(global_var.rename_page.lineEdit.text())
 
 
 def rename_exit_btn_clicked(dialog):
     dialog.close()
 
 
-def handle_delete(action):
-    print(action.text())
+def handle_delete(delete):
+    file = global_var.file_page.listWidget.currentItem().text()[
+                      global_var.file_page.listWidget.currentItem().text().find(':') + 4:]
+    if delete == 1:
+        #文件夹
+        if client.cmd_rmd(file):
+            # QMessageBox
+            pass
+    elif delete == 2:
+        #文件
+        if client.cmd_delete(file):
+            pass
+
+    create_list()
 
 
 def listWidgetContext(point):
     print(global_var.file_page.listWidget.currentItem().text())
     popMenu = QMenu()
-    download = popMenu.addAction("下载")
-    rename = popMenu.addAction("重命名")
-    delete = popMenu.addAction("删除该文件")
-    download.triggered.connect(lambda: handle_download(download))
-    rename.triggered.connect(lambda: handle_rename(rename))
-    delete.triggered.connect(lambda: handle_delete(delete))
-    popMenu.exec_(QCursor.pos())
+    if global_var.file_page.listWidget.currentItem().text()[0] == 'd':
+        rename = popMenu.addAction("重命名")
+        delete = popMenu.addAction("删除该文件夹")
+        rename.triggered.connect(lambda: handle_rename(rename))
+        delete.triggered.connect(lambda: handle_delete(1))
+    else:
+        download = popMenu.addAction("下载")
+        rename = popMenu.addAction("重命名")
+        delete = popMenu.addAction("删除该文件")
+        download.triggered.connect(lambda: handle_download())
+        rename.triggered.connect(lambda: handle_rename())
+        delete.triggered.connect(lambda: handle_delete(2))
+        popMenu.exec_(QCursor.pos())
+
+
+def create_list():
+    client.directory = []
+    client.cmd_list()
+    global_var.file_page.listWidget.clear()
+    for item in client.directory:
+        a = QListWidgetItem(' '.join(item))
+        if item[0]:
+            if(item[0][0] == 'd'):
+                a.setTextColor(Qt.white)
+            else:
+                a.setTextColor(Qt.blue)
+            global_var.file_page.listWidget.addItem(a)
+
+
+def handle_cmd():
+    if global_var.file_page.listWidget.currentItem().text()[0] == 'd':
+        client.cmd_cwd(global_var.file_page.listWidget.currentItem().text()[
+                      global_var.file_page.listWidget.currentItem().text().find(':') + 4:])
+    create_list()
+
+
+def handle_return_btn_clicked():
+    client.cmd_cwd('../')
+    create_list()
 
 
 if __name__ == '__main__':

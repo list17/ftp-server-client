@@ -585,6 +585,7 @@ int handle_list(int epoll_fd, struct epoll_event *event, char *command) {
     (void) epoll_fd;
     (void) command;
     char lscommand[255];
+    memset(lscommand, '\0', 255);
     epollArgs *args = event->data.ptr;
     if(args->fds->data_fd == -1 && args->fds->pasv_fd == -1){
         strcpy(args->buffer + args->buffer_length, "425 Use PORT or PASV first.\r\n");
@@ -594,8 +595,9 @@ int handle_list(int epoll_fd, struct epoll_event *event, char *command) {
     strcpy(args->buffer + args->buffer_length,"150 directory list start\r\n");
     args->buffer_length += strlen("150 directory list start\r\n");
     FILE *stream;
+
     strcpy(lscommand,"ls -Nn ");
-    strcpy(lscommand + 7, args->working_dir);
+    strncpy(lscommand + 7, args->working_dir, strlen(args->working_dir));
     stream = popen( lscommand, "r" );
     int ret = fread( args->fds->data+args->fds->data_length, sizeof(char), DATA_SIZE_MAX - args->fds->data_length, stream);
     args->fds->data_length += ret;
@@ -748,12 +750,13 @@ int handle_cwd(int epoll_fd, struct epoll_event *event, char *command) {
         args->buffer_length += strlen("250 Directory changed successfully.\r\n");
     } else {
         char temp[WORKINGDIRECTORY];
-        strcpy(temp, args->working_dir);
+        memset(temp, '\0', WORKINGDIRECTORY);
+        strncpy(temp, args->working_dir, strlen(args->working_dir));
         strcpy(temp+strlen(args->working_dir), command);
 
         DIR *dir = opendir(temp);
         if(dir){
-            strcpy(args->working_dir+strlen(args->working_dir),command);
+            strcpy(args->working_dir, temp);
             strcpy(args->buffer+args->buffer_length,"250 Directory changed successfully.\r\n");
             args->buffer_length += strlen("250 Directory changed successfully.\r\n");
         } else {
@@ -766,8 +769,9 @@ int handle_cwd(int epoll_fd, struct epoll_event *event, char *command) {
         }
     }
     if(args->working_dir[strlen(args->working_dir)-1]!='/'){
-        args->working_dir[strlen(args->working_dir)]='/';
-        args->working_dir[strlen(args->working_dir) +1]='\0';
+        size_t temp = strlen(args->working_dir);
+        args->working_dir[temp]='/';
+        args->working_dir[temp + 1]= '\0';
     }
     return 0;
 }
@@ -942,8 +946,8 @@ int handle_rnfr(int epoll_fd, struct epoll_event *event, char *command) {
     (void) epoll_fd;
     epollArgs *args = event->data.ptr;
     strcpy(args->rename_from, args->working_dir);
-    strcpy(args->rename_from, command);
-    if(!access(args->rename_from,X_OK)){
+    strcpy(args->rename_from + strlen(args->working_dir), command);
+    if(!access(args->rename_from,F_OK)){
         int ret = str_cpy(&args, "350 Ready for RNTO.\r\n");
         args->buffer_length += ret;
         args->reto = 1;

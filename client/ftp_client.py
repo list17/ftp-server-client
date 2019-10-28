@@ -20,6 +20,8 @@ class FTPClient:
 
         self.get_file_size = 0
         self.put_file_size = 0
+        self.get_file_size_already = 0
+        self.put_file_size_already = 0
 
         self.socket_t = socket(AF_INET, SOCK_STREAM)
         self.socket_t.connect((self.address, self.port))
@@ -115,6 +117,7 @@ class FTPClient:
         return 0
 
     def cmd_cwd(self, directory):
+        print(directory)
         self.socket_t.send(("CWD %s\r\n" % directory).encode(self.encoding))
         receive = self.socket_t.recv(self.read_size)
         if receive.split(b' ')[0] == b'250':
@@ -139,8 +142,9 @@ class FTPClient:
                 pass
             self.socket_t.send("LIST\r\n".encode(self.encoding))
             receive1 = self.socket_t.recv(self.read_size)
-            receive2 = self.socket_t.recv(self.read_size)
-            if receive1.split(b' ')[0] == b'150' and receive2.split(b' ')[0] == b'226':
+            if receive1.count(b'\r\n') == 1:
+                receive2 = self.socket_t.recv(self.read_size)
+            if receive1.split(b' ')[0] == b'150':
                 conn, sockaddr = sock.accept()
                 if self.timeout is not _GLOBAL_DEFAULT_TIMEOUT:
                     conn.settimeout(self.timeout)
@@ -153,7 +157,7 @@ class FTPClient:
                 return 1
         return 0
 
-    def cmd_retr(self, filename, callback, blocksize=8192, rest=None):
+    def cmd_retr(self, filename, callback, dialog, blocksize=8192, rest=None):
             self.cmd_type('I')
             size = None
             with self.makeport() as sock:
@@ -171,6 +175,7 @@ class FTPClient:
                         data = conn.recv(blocksize)
                         if not data:
                             break
+                        self.get_file_size_already += sys.getsizeof(data)
                         callback(data)
                     receive2 = self.socket_t.recv(self.read_size)
                     return 1
