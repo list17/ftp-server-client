@@ -7,6 +7,7 @@ from login import Ui_MainWindow as LoginPage
 from address_settings import Ui_Dialog as AddrSetPage
 from file import Ui_ListFTP as FilePage
 from renameWindow import Ui_Dialog as RenamePage
+from mkdirWindow import Ui_Dialog as MkdirPage
 from downloadProBarPage import Ui_Dialog as DownloadPage
 from ftp_client import FTPClient
 
@@ -16,12 +17,8 @@ class BasicVar:
         self.addr_set_page = AddrSetPage()
         self.rename_page = RenamePage()
         self.download_page = DownloadPage()
+        self.mkdir_page = MkdirPage()
         self.file_page = FilePage()
-
-
-class Command:
-    def __init__(self):
-        pass
 
 
 global_var = BasicVar()
@@ -59,6 +56,9 @@ def confirm_btn_clicked(main_window):
             global_var.file_page.listWidget.customContextMenuRequested[QPoint].connect(listWidgetContext)
             global_var.file_page.listWidget.doubleClicked.connect(lambda: handle_cmd())
             global_var.file_page.return_btn.clicked.connect(lambda: handle_return_btn_clicked())
+            global_var.file_page.create_btn.clicked.connect(lambda: handle_mkdir())
+            global_var.file_page.upload_btn.clicked.connect(lambda: handle_upload_btn_clicked(main_window))
+            global_var.file_page.begin_upload_btn.clicked.connect(lambda: handle_begin_upload_btn_clicked())
 
 
 #退出按钮点击函数
@@ -143,14 +143,34 @@ def handle_delete(delete):
     if delete == 1:
         #文件夹
         if client.cmd_rmd(file):
-            # QMessageBox
-            pass
+            msg = QMessageBox(QMessageBox.Information, "Success", "删除空文件夹成功")
+            msg.exec_()
     elif delete == 2:
         #文件
         if client.cmd_delete(file):
-            pass
-
+            msg = QMessageBox(QMessageBox.Information, "Success", "删除文件成功")
+            msg.exec_()
     create_list()
+
+
+def handle_mkdir():
+    mkdir_page = QDialog()
+    global_var.mkdir_page.setupUi(mkdir_page)
+    mkdir_page.show()
+    global_var.mkdir_page.buttonBox.accepted.connect(lambda: mkdir_confirm_btn_clicked())
+    global_var.mkdir_page.buttonBox.rejected.connect(lambda: mkdir_exit_btn_clicked(mkdir_page))
+    mkdir_page.exec_()
+
+
+def mkdir_confirm_btn_clicked():
+    if client.cmd_mkd(global_var.mkdir_page.lineEdit.text()):
+        msg = QMessageBox(QMessageBox.Information, "Success", "创建文件夹成功")
+        msg.exec_()
+    create_list()
+
+
+def mkdir_exit_btn_clicked(dialog):
+    dialog.close()
 
 
 def listWidgetContext(point):
@@ -159,13 +179,14 @@ def listWidgetContext(point):
     if global_var.file_page.listWidget.currentItem().text()[0] == 'd':
         rename = popMenu.addAction("重命名")
         delete = popMenu.addAction("删除该文件夹")
-        rename.triggered.connect(lambda: handle_rename(rename))
+        rename.triggered.connect(lambda: handle_rename())
         delete.triggered.connect(lambda: handle_delete(1))
+        popMenu.exec_(QCursor.pos())
     else:
         download = popMenu.addAction("下载")
         rename = popMenu.addAction("重命名")
         delete = popMenu.addAction("删除该文件")
-        download.triggered.connect(lambda: handle_download())
+        download.triggered.connect(lambda: handle_download( ))
         rename.triggered.connect(lambda: handle_rename())
         delete.triggered.connect(lambda: handle_delete(2))
         popMenu.exec_(QCursor.pos())
@@ -195,6 +216,21 @@ def handle_cmd():
 def handle_return_btn_clicked():
     client.cmd_cwd('../')
     create_list()
+
+
+def handle_upload_btn_clicked(widget):
+    # absolute_path is a QString object
+    absolute_path = QFileDialog.getOpenFileName(widget, "Open file", ".", "files(*.*)", )
+
+    if absolute_path:
+        cur_path = QDir('.')
+        relative_path = cur_path.relativeFilePath(absolute_path)
+        client.upload_filename = absolute_path
+        global_var.file_page.lineEdit.setText(relative_path)
+
+
+def handle_begin_upload_btn_clicked():
+    pass
 
 
 if __name__ == '__main__':

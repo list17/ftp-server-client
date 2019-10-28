@@ -15,6 +15,7 @@ class FTPClient:
         self.encoding = "latin-1"
         self.read_size = 20000
         self.read_dir = ""
+        self.upload_filename = ""
         self.timeout = _GLOBAL_DEFAULT_TIMEOUT
         self.rest = None
 
@@ -180,6 +181,30 @@ class FTPClient:
                     receive2 = self.socket_t.recv(self.read_size)
                     return 1
             return 0
+
+
+    def cmd_stor(self, blocksize=8192, rest=None):
+        self.cmd_type('I')
+        size = None
+        with self.makeport() as sock:
+            if self.rest is not None:
+                # self.sendcmd("REST %s" % rest)
+                pass
+            self.socket_t.send(("STOR %s\r\n" % self.upload_filename).encode(self.encoding))
+            receive1 = self.socket_t.recv(self.read_size)
+            if receive1.split(b' ')[0] == b'150':
+                self.get_file_size = int(receive1.split(b'(')[1].split(b' ')[0].decode('utf-8'))
+                conn, sockaddr = sock.accept()
+                if self.timeout is not _GLOBAL_DEFAULT_TIMEOUT:
+                    conn.settimeout(self.timeout)
+                while 1:
+                    data = conn.recv(blocksize)
+                    if not data:
+                        break
+                    self.get_file_size_already += sys.getsizeof(data)
+                receive2 = self.socket_t.recv(self.read_size)
+                return 1
+        return 0
 
 
     def sendport(self, host, port):
