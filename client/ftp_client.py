@@ -30,7 +30,6 @@ class FTPClient:
         self.passive = 0
 
     def cmd_connect(self):
-        print(self.port)
         self.socket_t.connect((self.address, int(self.port)))
         self.socket_t.recv(self.read_size)
 
@@ -253,5 +252,12 @@ class FTPClient:
         self.socket_t.send("ABOR\r\n".encode(self.encoding))
         receive = self.socket_t.recv(self.read_size)
         if receive.split(b' ')[0] == b'225':
+            return 1
+        return 0
+
+    def cmd_quit(self):
+        self.socket_t.send("QUIT\r\n".encode(self.encoding))
+        receive = self.socket_t.recv(self.read_size)
+        if receive.split(b' ')[0] == b'221':
             return 1
         return 0

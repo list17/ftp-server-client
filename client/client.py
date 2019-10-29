@@ -29,18 +29,6 @@ class BasicVar:
 global_var = BasicVar()
 client = FTPClient()
 
-
-def main():
-    app = QApplication(sys.argv)
-    login_page = QMainWindow()
-    global_var.login_page.setupUi(login_page)
-    login_page.show()
-    global_var.login_page.confirm_btn.clicked.connect(lambda: confirm_btn_clicked(login_page))
-    global_var.login_page.exit_btn.clicked.connect(lambda: exit_btn_clicked(login_page))
-    global_var.login_page.menu.triggered[QAction].connect(lambda: set_address(global_var.login_page.actionaddress_settings))
-    sys.exit(app.exec_())
-
-
 #确定按钮点击函数
 def confirm_btn_clicked(main_window):
     client.username = global_var.login_page.username_edit.text()
@@ -320,6 +308,27 @@ def mode_set_confirm_btn_clicked():
 
 def mode_set_exit_btn_clicked(action):
     action.close()
+
+
+class QMainWindow(QMainWindow):
+    def closeEvent(self, event):
+        reply = QMessageBox.question(self, '本程序', "是否要退出程序？", QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            client.cmd_quit()
+            event.accept()
+        else:
+            event.ignore()
+
+
+def main():
+    app = QApplication(sys.argv)
+    login_page = QMainWindow()
+    global_var.login_page.setupUi(login_page)
+    login_page.show()
+    global_var.login_page.confirm_btn.clicked.connect(lambda: confirm_btn_clicked(login_page))
+    global_var.login_page.exit_btn.clicked.connect(lambda: exit_btn_clicked(login_page))
+    global_var.login_page.menu.triggered[QAction].connect(lambda: set_address(global_var.login_page.actionaddress_settings))
+    sys.exit(app.exec_())
 
 
 if __name__ == '__main__':
