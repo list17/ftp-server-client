@@ -1,16 +1,17 @@
 import sys
 import threading
-import _thread
+import os
 
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
-from login import Ui_MainWindow as LoginPage
-from address_settings import Ui_Dialog as AddrSetPage
-from file import Ui_ListFTP as FilePage
-from renameWindow import Ui_Dialog as RenamePage
-from mkdirWindow import Ui_Dialog as MkdirPage
-from modeSettingWindow import Ui_Dialog as ModeSettingPage
-from downloadProBarPage import Ui_Dialog as DownloadPage
+from UiDesign.login import Ui_MainWindow as LoginPage
+from UiDesign.address_settings import Ui_Dialog as AddrSetPage
+from UiDesign.file import Ui_ListFTP as FilePage
+from UiDesign.renameWindow import Ui_Dialog as RenamePage
+from UiDesign.mkdirWindow import Ui_Dialog as MkdirPage
+from UiDesign.modeSettingWindow import Ui_Dialog as ModeSettingPage
+from UiDesign.downloadProBarPage import Ui_Dialog as DownloadPage
+from UiDesign.uploadWindow import Ui_Dialog as UploadPage
 from ftp_client import FTPClient
 
 class BasicVar:
@@ -21,6 +22,7 @@ class BasicVar:
         self.download_page = DownloadPage()
         self.mkdir_page = MkdirPage()
         self.mode_setting_page = ModeSettingPage()
+        self.upload_page = UploadPage()
         self.file_page = FilePage()
 
 
@@ -103,28 +105,28 @@ def handle_download():
     global_var.download_page.setupUi(download_page)
     download_page.show()
     global_var.download_page.begin_btn.clicked.connect(lambda: download_btn_clicked(download_page))
-    global timer
+    global_var.download_page.begin_btn.setShown(False)
+    timer = threading.Timer(1.5, download_update)
     timer.start()
     download_page.exec_()
 
 
 def download_btn_clicked(dialog):
-    client.cmd_abor()
     dialog.close()
 
 
 
 def download_update():
-    global global_var, client, timer
+    global global_var, client
     global_var.download_page.sum_label.setText(str(client.get_file_size))
     global_var.download_page.download_label.setText(str(client.get_file_size_already))
     if client.get_file_size_already < client.get_file_size:
         timer = threading.Timer(0.5, download_update)
         timer.start()
     else:
-        timer.cancel()
-
-timer = threading.Timer(0.5, download_update)
+        global_var.download_page.sum_label.setText(str(client.get_file_size))
+        global_var.download_page.download_label.setText(str(client.get_file_size))
+        global_var.download_page.begin_btn.setShown(True)
 
 
 def download_thread():
@@ -145,10 +147,27 @@ def handle_rename():
     rename_page.exec_()
 
 
+def handle_continue_download():
+    filename = global_var.file_page.listWidget.currentItem().text()[
+                    global_var.file_page.listWidget.currentItem().text().find(':') + 4:]
+    client.rest = os.path.getsize(filename)
+    client.get_file_size_already = client.rest
+    thread = threading.Thread(target=download_thread)
+    thread.start()
+    download_page = QDialog()
+    global_var.download_page.setupUi(download_page)
+    download_page.show()
+    global_var.download_page.begin_btn.clicked.connect(lambda: download_btn_clicked(download_page))
+    timer = threading.Timer(0.5, download_update)
+    timer.start()
+    download_page.exec_()
+
+
+
+
 def rename_confirm_btn_clicked():
     client.cmd_rename(global_var.file_page.listWidget.currentItem().text()[global_var.file_page.listWidget.currentItem().text().find(':') + 4:], global_var.rename_page.lineEdit.text())
     create_list()
-    # print(global_var.rename_page.lineEdit.text())
 
 
 def rename_exit_btn_clicked(dialog):
@@ -192,7 +211,6 @@ def mkdir_exit_btn_clicked(dialog):
 
 
 def listWidgetContext(point):
-    print(global_var.file_page.listWidget.currentItem().text())
     popMenu = QMenu()
     if global_var.file_page.listWidget.currentItem().text()[0] == 'd':
         rename = popMenu.addAction("重命名")
@@ -202,9 +220,11 @@ def listWidgetContext(point):
         popMenu.exec_(QCursor.pos())
     else:
         download = popMenu.addAction("下载")
+        _continue = popMenu.addAction("继续下载")
         rename = popMenu.addAction("重命名")
         delete = popMenu.addAction("删除该文件")
         download.triggered.connect(lambda: handle_download( ))
+        _continue.triggered.connect(lambda: handle_continue_download())
         rename.triggered.connect(lambda: handle_rename())
         delete.triggered.connect(lambda: handle_delete(2))
         popMenu.exec_(QCursor.pos())
@@ -250,6 +270,10 @@ def handle_upload_btn_clicked(widget):
 def handle_begin_upload_btn_clicked():
     client.cmd_stor(open(client.upload_filename_full, "rb"))
     create_list()
+    upload_page = QDialog()
+    global_var.upload_page.setupUi(upload_page)
+    upload_page.show()
+    upload_page.exec_()
 
 
 # 文件传输模式设置

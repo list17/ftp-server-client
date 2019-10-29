@@ -908,7 +908,7 @@ int handle_stor(int epoll_fd, struct epoll_event *event, char *command) {
             close(args->fds->data_fd);
             args->fds->data_fd = -1;
         }
-        return -1;
+        return -1;f
     } else {
         lseek(args->fds->file_fd,args->appe_offset,SEEK_SET);
         size_t ret = str_cpy(&args, "150 The server is ready.\r\n");

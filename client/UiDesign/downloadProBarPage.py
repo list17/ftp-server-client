@@ -48,7 +48,8 @@ class Ui_Dialog(object):
         self.sum_label.setObjectName(_fromUtf8("sum_label"))
         self.gridLayout.addWidget(self.sum_label, 0, 1, 1, 1)
         self.begin_btn = QtGui.QPushButton(Dialog)
-        self.begin_btn.setGeometry(QtCore.QRect(140, 190, 112, 36))
+        self.begin_btn.setGeometry(QtCore.QRect(140, 200, 112, 36))
+        self.begin_btn.setDefault(False)
         self.begin_btn.setObjectName(_fromUtf8("begin_btn"))
 
         self.retranslateUi(Dialog)
@@ -61,5 +62,5 @@ class Ui_Dialog(object):
         self.label_2.setText(_translate("Dialog", "总大小：", None))
         self.download_label.setText(_translate("Dialog", "0", None))
         self.sum_label.setText(_translate("Dialog", "0", None))
-        self.begin_btn.setText(_translate("Dialog", "取消", None))
+        self.begin_btn.setText(_translate("Dialog", "完成", None))
 
