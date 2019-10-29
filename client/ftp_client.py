@@ -7,13 +7,12 @@ import string
 class FTPClient:
     def __init__(self):
         self.address = "127.0.0.1"
-        self.port = 6789
-        self.data_port = self.port - 1
+        self.port = 21
         self.write_oft = 0
         self.username = ""
         self.password = ""
         self.is_login = 0
-        self.encoding = "latin-1"
+        self.encoding = "utf-8"
         self.read_size = 20000
         self.read_dir = ""
         self.upload_filename = ""
@@ -27,14 +26,14 @@ class FTPClient:
         self.put_file_size_already = 0
 
         self.socket_t = socket(AF_INET, SOCK_STREAM)
-        self.socket_t.connect((self.address, self.port))
-        self.socket_t.recv(self.read_size)
-
         self.directory = []
-
         self.passive = 0
 
-        # self.sock = socket.create_connection((self.host, self.port), self.timeout)
+    def cmd_connect(self):
+        print(self.port)
+        self.socket_t.connect((self.address, int(self.port)))
+        self.socket_t.recv(self.read_size)
+
         self.af = self.socket_t.family
         self.data_socket_t = socket(AF_INET, SOCK_STREAM)
 
@@ -68,7 +67,7 @@ class FTPClient:
         return 0
 
     def cmd_rest(self):
-        self.socket_t.send(("REST %d" % self.rest).encode(self.encoding))
+        self.socket_t.send(("REST %ld\r\n" % self.rest).encode(self.encoding))
         receive = self.socket_t.recv(self.read_size)
         if receive.split(b' ')[0] == b'350':
             return 1
@@ -161,9 +160,6 @@ class FTPClient:
             conn = create_connection((host, port), self.timeout, None)
         elif not self.passive:
             with self.makeport() as sock:
-                if self.rest is not None:
-                    # self.sendcmd("REST %s" % rest)
-                    pass
                 conn, sockaddr = sock.accept()
         self.socket_t.send("LIST\r\n".encode(self.encoding))
         receive1 = self.socket_t.recv(self.read_size)
@@ -186,9 +182,6 @@ class FTPClient:
             conn = create_connection((host, port), self.timeout, None)
         elif not self.passive:
             with self.makeport() as sock:
-                if self.rest is not None:
-                    # self.sendcmd("REST %s" % rest)
-                    pass
                 conn, sockaddr = sock.accept()
                 if self.timeout is not _GLOBAL_DEFAULT_TIMEOUT:
                     conn.settimeout(self.timeout)
@@ -216,7 +209,6 @@ class FTPClient:
         elif not self.passive:
             with self.makeport() as sock:
                 if self.rest is not None:
-                    # self.sendcmd("REST %s" % rest)
                     pass
                 conn, sockaddr = sock.accept()
         self.socket_t.send(("STOR %s\r\n" % self.upload_filename).encode(self.encoding))

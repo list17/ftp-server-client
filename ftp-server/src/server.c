@@ -65,6 +65,9 @@ typedef struct fd_collection{
     enum TRANS_MODE trans_mode;
     enum WRITE_MODE write_mode;
 
+    off_t rest_offset;
+    off_t appe_offset;
+
 }fd_collection;
 
 typedef struct epoll_args{
@@ -81,9 +84,6 @@ typedef struct epoll_args{
 
     char rename_from[PATH_MAX];
     int reto;
-
-    off_t rest_offset;
-    off_t appe_offset;
 
     struct sockaddr_storage addr;
     socklen_t addrlen;
@@ -212,8 +212,8 @@ void epoll_args_init(epollArgs **args, int fd, char *buf) {
     }
     (*args)->wd_len = strlen((*args)->working_dir);
     (*args)->reto = 0;
-    (*args)->rest_offset = 0;
-    (*args)->appe_offset = 0;
+    (*args)->fds->rest_offset = 0;
+    (*args)->fds->appe_offset = 0;
 
     (*args)->buffer_length = 0;
     (*args)->fds->data_length = 0;
@@ -361,7 +361,7 @@ int ftp_read(int epoll_fd, struct epoll_event *event, char *buf, int n) {
             command[command_begin] = '\0';
             memmove(buf,buf+command_begin+2,BUFFER_SIZE_MAX-command_begin);
             buf_end = buf_end - command_begin - 2;
-            printf("read message is : %s",command);
+            printf("read message is : %s\n",command);
             handle_command(epoll_fd, event, command);
         }
         return temp;
@@ -487,6 +487,8 @@ int ftp_write_data(int epoll_fd, struct epoll_event *event, int mode) {
                     epollArgs1->fds->trans_mode = INIT;
                 }
                 epollArgs1->fds->ready_to_write = 0;
+                epollArgs1->fds->rest_offset = 0;
+                printf("%s\n", "rest_offset 已置为零");
                 write(epollArgs1->fds->command_fd, "226 File transfered completely\r\n",
                       strlen("226 File transfered completely\r\n"));
                 return 0;
@@ -744,7 +746,7 @@ int handle_cwd(int epoll_fd, struct epoll_event *event, char *command) {
                 }
             }
         }
-    } else if(!strcmp("/",command)){
+    } else if(!strcmp("/",command)) {
         args->working_dir[args->wd_len] = '\0';
         strcpy(args->buffer+args->buffer_length,"250 Directory changed successfully.\r\n");
         args->buffer_length += strlen("250 Directory changed successfully.\r\n");
@@ -821,7 +823,7 @@ int handle_retr(int epoll_fd, struct epoll_event *event, char *command) {
     struct stat stat_t;
     int temp = stat(filepath, &stat_t);
     if(((args->fds->file_fd = open(filepath, O_RDONLY | O_NONBLOCK)) == -1)
-    || (temp == -1) ||(!S_ISREG(stat_t.st_mode)) || (args->rest_offset > stat_t.st_size)){
+    || (temp == -1) ||(!S_ISREG(stat_t.st_mode)) || (args->fds->rest_offset > stat_t.st_size)){
         strcpy(args->buffer+args->buffer_length, "425 Failed to open file.\r\n");
         args->buffer_length += strlen("425 Failed to open file.\r\n");
         if(args->fds->data_fd != -1){
@@ -830,7 +832,7 @@ int handle_retr(int epoll_fd, struct epoll_event *event, char *command) {
         }
         return -1;
     } else {
-        lseek(args->fds->file_fd, args->rest_offset, SEEK_SET);
+        lseek(args->fds->file_fd, args->fds->rest_offset, SEEK_SET);
         size_t ret = str_cpy(&args, "150 Opening BINARY mode data connection (%ld bytes).\r\n", stat_t.st_size);
         if(ret < (BUFFER_SIZE_MAX-args->buffer_length)){
             args->buffer_length += ret;
@@ -908,9 +910,9 @@ int handle_stor(int epoll_fd, struct epoll_event *event, char *command) {
             close(args->fds->data_fd);
             args->fds->data_fd = -1;
         }
-        return -1;f
+        return -1;
     } else {
-        lseek(args->fds->file_fd,args->appe_offset,SEEK_SET);
+        lseek(args->fds->file_fd,args->fds->appe_offset,SEEK_SET);
         size_t ret = str_cpy(&args, "150 The server is ready.\r\n");
         if(ret<(BUFFER_SIZE_MAX-args->buffer_length)){
             args->buffer_length += ret;
@@ -1039,7 +1041,7 @@ int handle_appe(int epoll_fd, struct epoll_event *event, char *command) {
     (void) epoll_fd;
     epollArgs *args = event->data.ptr;
     char *str_part;
-    args->appe_offset = strtoul(command, &str_part, 10);
+    args->fds->appe_offset = strtoul(command, &str_part, 10);
     return 0;
 }
 
@@ -1047,8 +1049,9 @@ int handle_rest(int epoll_fd, struct epoll_event *event, char *command) {
     (void) epoll_fd;
     epollArgs *args = event->data.ptr;
     char *strpart;
-    args->rest_offset = strtoul(command, &strpart, 10);
-    size_t ret = str_cpy(&args, "350 Restart position accepted (%ld).\r\n",args->rest_offset);
+    args->fds->rest_offset = strtoul(command, &strpart, 10);
+    printf("offset = %ld\n", args->fds->rest_offset);
+    size_t ret = str_cpy(&args, "350 Restart position accepted (%ld).\r\n",args->fds->rest_offset);
     args->buffer_length += ret;
     return 0;
 }

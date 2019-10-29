@@ -49,6 +49,12 @@ def confirm_btn_clicked(main_window):
         msg = QMessageBox(QMessageBox.Critical, "anonymous", "error")
         msg.exec_()
     else:
+        try:
+            client.cmd_connect()
+        except:
+            msg = QMessageBox(QMessageBox.Critical, "连接失败，检查ip和端口", "error")
+            msg.exec_()
+            return
         if client.cmd_user() and client.cmd_pass():
             global_var.file_page.setupUi(main_window)
             msg = QMessageBox(QMessageBox.Information, "登录成功", "success")
@@ -75,7 +81,8 @@ def exit_btn_clicked(main_window):
 #设定port确定按钮点击函数
 def addr_set_confirm_btn_clicked():
     client.address = global_var.addr_set_page.address_edit.text()
-    client.port = global_var.addr_set_page.port_edit.text()
+    client.port = int(global_var.addr_set_page.port_edit.text())
+    print(client.port)
     msg = QMessageBox()
     msg.setIcon(QMessageBox.Information)
     msg.setText("设定成功")
@@ -93,13 +100,15 @@ def set_address(action):
         addr_set_page = QDialog()
         global_var.addr_set_page.setupUi(addr_set_page)
         addr_set_page.show()
+        global_var.addr_set_page.address_edit.setText(str(client.address))
+        global_var.addr_set_page.port_edit.setText(str(client.port))
         global_var.addr_set_page.addr_confirm_btn.clicked.connect(lambda: addr_set_confirm_btn_clicked())
         global_var.addr_set_page.addr_exit_btn.clicked.connect(lambda: addr_set_exit_btn_clicked(addr_set_page))
         addr_set_page.exec_()
 
 
 def handle_download():
-    thread = threading.Thread(target=download_thread)
+    thread = threading.Thread(target=download_thread, args=[1])
     thread.start()
     download_page = QDialog()
     global_var.download_page.setupUi(download_page)
@@ -126,16 +135,31 @@ def download_update():
     else:
         global_var.download_page.sum_label.setText(str(client.get_file_size))
         global_var.download_page.download_label.setText(str(client.get_file_size))
-        global_var.download_page.begin_btn.setShown(True)
+        client.get_file_size = 0
+        client.get_file_size_already = 0
+        client.rest = 0
 
 
-def download_thread():
+def download_thread(mode):
     global client, global_var
-    client.cmd_retr(global_var.file_page.listWidget.currentItem().text()[
-                    global_var.file_page.listWidget.currentItem().text().find(':') + 4:],
-                    open(global_var.file_page.listWidget.currentItem().text()[
-                         global_var.file_page.listWidget.currentItem().text().find(':') + 4:], 'wb').write,
-                    global_var.download_page)
+    if client.rest:
+        print("rest")
+        client.cmd_rest()
+        client.rest = 0
+    if mode:
+        print(1)
+        client.cmd_retr(global_var.file_page.listWidget.currentItem().text()[
+                        global_var.file_page.listWidget.currentItem().text().find(':') + 4:],
+                        open(global_var.file_page.listWidget.currentItem().text()[
+                             global_var.file_page.listWidget.currentItem().text().find(':') + 4:], 'wb').write,
+                        global_var.download_page)
+    else:
+        print(0)
+        client.cmd_retr(global_var.file_page.listWidget.currentItem().text()[
+                        global_var.file_page.listWidget.currentItem().text().find(':') + 4:],
+                        open(global_var.file_page.listWidget.currentItem().text()[
+                             global_var.file_page.listWidget.currentItem().text().find(':') + 4:], 'ab').write,
+                        global_var.download_page)
 
 
 def handle_rename():
@@ -152,7 +176,7 @@ def handle_continue_download():
                     global_var.file_page.listWidget.currentItem().text().find(':') + 4:]
     client.rest = os.path.getsize(filename)
     client.get_file_size_already = client.rest
-    thread = threading.Thread(target=download_thread)
+    thread = threading.Thread(target=download_thread, args=[0])
     thread.start()
     download_page = QDialog()
     global_var.download_page.setupUi(download_page)
@@ -223,7 +247,7 @@ def listWidgetContext(point):
         _continue = popMenu.addAction("继续下载")
         rename = popMenu.addAction("重命名")
         delete = popMenu.addAction("删除该文件")
-        download.triggered.connect(lambda: handle_download( ))
+        download.triggered.connect(lambda: handle_download())
         _continue.triggered.connect(lambda: handle_continue_download())
         rename.triggered.connect(lambda: handle_rename())
         delete.triggered.connect(lambda: handle_delete(2))
