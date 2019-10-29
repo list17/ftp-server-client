@@ -61,7 +61,7 @@ def test(port=21, directory='/tmp'):
     if ftp.sendcmd('TYPE I') != '200 Type set to I.':
       print 'Bad response for TYPE I'
       credit -= minor
-    # # PORT download
+    # PORT download
     filename = 'test%d.data' % random.randint(100, 200)
     create_test_file(directory + '/' + filename)
     ftp.set_pasv(False)
