@@ -33,32 +33,29 @@ client = FTPClient()
 def confirm_btn_clicked(main_window):
     client.username = global_var.login_page.username_edit.text()
     client.password = global_var.login_page.password_edit.text()
-    if client.username != "anonymous":
-        msg = QMessageBox(QMessageBox.Critical, "anonymous", "error")
+    try:
+        client.cmd_connect()
+    except:
+        msg = QMessageBox(QMessageBox.Critical, "连接失败，检查ip和端口", "error")
         msg.exec_()
-    else:
-        try:
-            client.cmd_connect()
-        except:
-            msg = QMessageBox(QMessageBox.Critical, "连接失败，检查ip和端口", "error")
+        return
+    if client.cmd_user() and client.cmd_pass():
+        client.cmd_syst()
+        global_var.file_page.setupUi(main_window)
+        msg = QMessageBox(QMessageBox.Information, "登录成功", "success")
+        msg.exec_()
+        if not client.cmd_pwd():
+            msg = QMessageBox(QMessageBox.Critical, "获取目录失败", "error")
             msg.exec_()
-            return
-        if client.cmd_user() and client.cmd_pass():
-            global_var.file_page.setupUi(main_window)
-            msg = QMessageBox(QMessageBox.Information, "登录成功", "success")
-            msg.exec_()
-            if not client.cmd_pwd():
-                msg = QMessageBox(QMessageBox.Critical, "获取目录失败", "error")
-                msg.exec_()
-            create_list()
-            global_var.file_page.listWidget.setContextMenuPolicy(Qt.CustomContextMenu)
-            global_var.file_page.listWidget.customContextMenuRequested[QPoint].connect(listWidgetContext)
-            global_var.file_page.listWidget.doubleClicked.connect(lambda: handle_cmd())
-            global_var.file_page.return_btn.clicked.connect(lambda: handle_return_btn_clicked())
-            global_var.file_page.create_btn.clicked.connect(lambda: handle_mkdir())
-            global_var.file_page.upload_btn.clicked.connect(lambda: handle_upload_btn_clicked(main_window))
-            global_var.file_page.begin_upload_btn.clicked.connect(lambda: handle_begin_upload_btn_clicked())
-            global_var.file_page.menusettings.triggered[QAction].connect(lambda: handle_mode_setting())
+        create_list()
+        global_var.file_page.listWidget.setContextMenuPolicy(Qt.CustomContextMenu)
+        global_var.file_page.listWidget.customContextMenuRequested[QPoint].connect(listWidgetContext)
+        global_var.file_page.listWidget.doubleClicked.connect(lambda: handle_cmd())
+        global_var.file_page.return_btn.clicked.connect(lambda: handle_return_btn_clicked())
+        global_var.file_page.create_btn.clicked.connect(lambda: handle_mkdir())
+        global_var.file_page.upload_btn.clicked.connect(lambda: handle_upload_btn_clicked(main_window))
+        global_var.file_page.begin_upload_btn.clicked.connect(lambda: handle_begin_upload_btn_clicked())
+        global_var.file_page.menusettings.triggered[QAction].connect(lambda: handle_mode_setting())
 
 
 #退出按钮点击函数
@@ -70,7 +67,6 @@ def exit_btn_clicked(main_window):
 def addr_set_confirm_btn_clicked():
     client.address = global_var.addr_set_page.address_edit.text()
     client.port = int(global_var.addr_set_page.port_edit.text())
-    print(client.port)
     msg = QMessageBox()
     msg.setIcon(QMessageBox.Information)
     msg.setText("设定成功")

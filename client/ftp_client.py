@@ -2,7 +2,7 @@ import sys
 import re
 from socket import *
 from socket import _GLOBAL_DEFAULT_TIMEOUT
-import string
+import ftplib
 
 class FTPClient:
     def __init__(self):
@@ -138,7 +138,7 @@ class FTPClient:
         hbytes = host.split('.')
         pbytes = [repr(port // 256), repr(port % 256)]
         bytes = hbytes + pbytes
-        self.socket_t.send(("PORT %s\r\n" % ','.join(bytes)).encode(self.encoding))
+        self.socket_t.send(("PORT " + ','.join(bytes) + "\r\n").encode(self.encoding))
         receive = self.socket_t.recv(self.read_size)
         if receive.split(b' ')[0] == b'200':
             return receive
@@ -158,15 +158,21 @@ class FTPClient:
             host, port = self.makepasv()
             conn = create_connection((host, port), self.timeout, None)
         elif not self.passive:
-            with self.makeport() as sock:
-                conn, sockaddr = sock.accept()
+            sock = self.makeport()
         self.socket_t.send("LIST\r\n".encode(self.encoding))
         receive1 = self.socket_t.recv(self.read_size)
+        if not self.passive:
+            conn, sockaddr = sock.accept()
         while 1:
             data = conn.recv(blocksize)
             if not data:
                 break
-            for i in data.decode('utf-8').split('\n'):
+            try:
+                a = data.decode('utf-8').index('\r')
+            except ValueError:
+                for i in data.decode('utf-8').split('\n'):
+                    self.directory.append(i.split(' '))
+            for i in data.decode('utf-8').split('\r\n'):
                 self.directory.append(i.split(' '))
         if receive1.count(b'\r\n') == 1:
             receive2 = self.socket_t.recv(self.read_size)
@@ -180,14 +186,15 @@ class FTPClient:
             host, port = self.makepasv()
             conn = create_connection((host, port), self.timeout, None)
         elif not self.passive:
-            with self.makeport() as sock:
-                conn, sockaddr = sock.accept()
-                if self.timeout is not _GLOBAL_DEFAULT_TIMEOUT:
-                    conn.settimeout(self.timeout)
+            sock = self.makeport()
         self.socket_t.send(("RETR %s\r\n" % filename).encode(self.encoding))
         receive1 = self.socket_t.recv(self.read_size)
         if receive1.split(b' ')[0] == b'150':
             self.get_file_size = int(receive1.split(b'(')[1].split(b' ')[0].decode('utf-8'))
+            if not self.passive:
+                conn, sockaddr = sock.accept()
+                if self.timeout is not _GLOBAL_DEFAULT_TIMEOUT:
+                    conn.settimeout(self.timeout)
         while 1:
             data = conn.recv(blocksize)
             if not data:
@@ -206,12 +213,11 @@ class FTPClient:
             host, port = self.makepasv()
             conn = create_connection((host, port), self.timeout, None)
         elif not self.passive:
-            with self.makeport() as sock:
-                if self.rest is not None:
-                    pass
-                conn, sockaddr = sock.accept()
+            sock = self.makeport()
         self.socket_t.send(("STOR %s\r\n" % self.upload_filename).encode(self.encoding))
         receive1 = self.socket_t.recv(self.read_size)
+        if not self.passive:
+            conn, sockaddr = sock.accept()
         while 1:
             buf = fp.read(blocksize)
             if not buf:

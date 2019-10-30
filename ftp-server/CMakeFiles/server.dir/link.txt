@@ -1,1 +1,0 @@
-/usr/bin/cc  -Wall -Wextra  -rdynamic CMakeFiles/server.dir/src/server.c.o  -o server 
