@@ -247,9 +247,9 @@ def create_list():
         a = QListWidgetItem(' '.join(item))
         if item[0]:
             if(item[0][0] == 'd'):
-                a.setTextColor(Qt.white)
-            else:
                 a.setTextColor(Qt.blue)
+            else:
+                a.setTextColor(Qt.white)
             global_var.file_page.listWidget.addItem(a)
 
 

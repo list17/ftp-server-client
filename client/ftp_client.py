@@ -169,11 +169,11 @@ class FTPClient:
                 break
             try:
                 a = data.decode('utf-8').index('\r')
+                for i in data.decode('utf-8').split('\r\n'):
+                    self.directory.append(i.split(' '))
             except ValueError:
                 for i in data.decode('utf-8').split('\n'):
                     self.directory.append(i.split(' '))
-            for i in data.decode('utf-8').split('\r\n'):
-                self.directory.append(i.split(' '))
         if receive1.count(b'\r\n') == 1:
             receive2 = self.socket_t.recv(self.read_size)
         return 1

@@ -1,8 +1,16 @@
-CC := gcc
-CC := ${CC}
+CC = gcc
+CFLAGS = -Wall
+TARGET = server
+SRCS = src/server.c
+INC = -I./header
 
-server:
-    ${CC} -Wall header/server.h src/server.c
-
+OBJS = $(SRCS:.c=.o)
+ 
+$(TARGET):$(OBJS)
+	$(CC) -o $@ $^
+ 
 clean:
-    rm server
+	rm -rf $(TARGET) $(OBJS)
+ 
+%.o:%.c
+	$(CC) $(CFLAGS) $(INC) -o $@ -c $<
